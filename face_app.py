@@ -1,6 +1,6 @@
 import os
-import warnings
-warnings.filterwarnings('ignore')
+import warningfilter
+# warnings.filterwarnings('ignore')
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew
 from crewai.process import Process
@@ -37,11 +37,39 @@ scrap_tool = ScrapeWebsiteTool()
 
 # 4️⃣ 사용자 입력 받기
 # 주요 필드와 토픽 입력
-field = input("Enter the main field of expertise: ")
-topic = input("Please specify topics of the field: ")
+# File upload functionality
+import tkinter as tk
+from tkinter import filedialog
 
-# 톤 선택
-tone = ["funny", "informative", "Emotional"]
+def browse_file():
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    
+    file_path = filedialog.askopenfilename(
+        title="Select an image file",
+        filetypes=[
+            ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp"),
+            ("All files", "*.*")
+        ]
+    )
+    
+    if file_path:
+        print(f"Selected file: {file_path}")
+        return file_path
+    else:
+        print("No file selected")
+        return None
+
+# Get image file path
+image_path = browse_file()
+
+
+# field = input("Enter the main field of expertise: ")
+# topic = input("Please specify topics of the field: ")
+
+###
+#  톤 선택
+''' tone = ["funny", "informative", "Emotional"]
 num = 1
 for i in tone:
     print(num, " : ", i)
@@ -49,6 +77,8 @@ for i in tone:
 
 input_tone = int(input("Enter the number of tone you want: "))
 select_tone = tone[input_tone-1]
+'''
+###
 
 # 결과 파일명 입력
 file_name = input("Enter the file name for the result: ")
@@ -56,6 +86,57 @@ file_name = input("Enter the file name for the result: ")
 """Agent 정의
 
 """
+# Import required libraries for image handling
+from PIL import Image
+import base64
+from io import BytesIO
+
+def encode_image_to_base64(image_path):
+    """Convert image to base64 string"""
+    try:
+        # Open and encode image
+        with Image.open(image_path) as img:
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Create byte buffer
+            buffered = BytesIO()
+            # Save image to buffer
+            img.save(buffered, format="JPEG")
+            # Encode to base64
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return img_str
+    except Exception as e:
+        print(f"Error encoding image: {e}")
+        return None
+
+# Initialize ChatOpenAI with the image
+if image_path:
+    image_base64 = encode_image_to_base64(image_path)
+    if image_base64:
+        # Create a new ChatOpenAI instance with the image in the system message
+        llm = ChatOpenAI(
+            model="gpt-4-vision-preview",  # Make sure to use vision model
+            max_tokens=4096,
+            temperature=0.7,
+            messages=[{
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You are a helpful assistant that can see and analyze images."
+                    },
+                    {
+                        "type": "image",
+                        "image_url": f"data:image/jpeg;base64,{image_base64}"
+                    }
+                ]
+            }]
+        )
+        print("Image successfully added to LLM context")
+    else:
+        print("Failed to encode image")
 
 # 5️⃣ Researcher 에이전트 정의
 researcher = Agent(
