@@ -466,66 +466,197 @@ def load_image(image_path: str) -> np.ndarray:
     return image
 
 def detect_face_landmarks(image: np.ndarray) -> dict:
-    """OpenCV의 기본 얼굴 검출기를 사용합니다."""
+    """OpenCV의 얼굴 검출기를 사용하여 더 상세한 얼굴 특징점을 검출합니다."""
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     
-    # 그레이스케일 변환
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # 얼굴 검출
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     
     if len(faces) == 0:
         raise Exception("얼굴을 찾을 수 없습니다.")
     
-    # 첫 번째 얼굴 사용
     x, y, w, h = faces[0]
     
-    # 간단한 랜드마크 생성 (얼굴 사각형의 주요 지점들)
+    # 더 상세한 얼굴 특징점 생성
     landmarks_dict = {
+        # 눈
         "point_left_eye": (x + w//4, y + h//3),
         "point_right_eye": (x + 3*w//4, y + h//3),
-        "point_nose": (x + w//2, y + h//2),
-        "point_mouth": (x + w//2, y + 2*h//3),
+        
+        # 눈썹
+        "point_left_eyebrow": (x + w//4, y + h//4),
+        "point_right_eyebrow": (x + 3*w//4, y + h//4),
+        
+        # 코
+        "point_nose_top": (x + w//2, y + 2*h//5),
+        "point_nose_bottom": (x + w//2, y + h//2),
+        
+        # 입
+        "point_mouth_left": (x + w//3, y + 2*h//3),
+        "point_mouth_right": (x + 2*w//3, y + 2*h//3),
+        "point_mouth_top": (x + w//2, y + 5*h//8),
+        "point_mouth_bottom": (x + w//2, y + 7*h//10),
+        
+        # 얼굴 윤곽
+        "point_forehead": (x + w//2, y + h//8),
         "point_chin": (x + w//2, y + h),
-        "point_left": (x, y + h//2),
-        "point_right": (x + w, y + h//2),
-        "point_top": (x + w//2, y)
+        "point_jaw_left": (x, y + 3*h//4),
+        "point_jaw_right": (x + w, y + 3*h//4),
+        "point_cheek_left": (x, y + h//2),
+        "point_cheek_right": (x + w, y + h//2),
+        "point_temple_left": (x, y + h//4),
+        "point_temple_right": (x + w, y + h//4)
     }
-    
+    print ("\nlandmarks_dict :" , landmarks_dict)
     return landmarks_dict
 
 def analyze_beauty_features(landmarks: dict) -> Dict[str, Any]:
-    """단순화된 미용 분석을 수행합니다."""
+    """더 상세한 얼굴 분석을 수행합니다."""
     results = {
         "face_symmetry": calculate_symmetry(landmarks),
         "face_ratio": calculate_face_ratio(landmarks),
+        "face_shape": determine_face_shape(landmarks),
+        "jaw_line": analyze_jaw_line(landmarks),
+        "forehead_type": analyze_forehead(landmarks),
+        "face_proportions": analyze_face_proportions(landmarks)
     }
+    print ("\nresults :" , results)
     return results
 
 def calculate_symmetry(landmarks: dict) -> float:
     """얼굴의 대칭성을 계산합니다."""
     left_eye = np.array(landmarks["point_left_eye"])
     right_eye = np.array(landmarks["point_right_eye"])
-    nose = np.array(landmarks["point_nose"])
+    nose = np.array(landmarks["point_nose_bottom"])
     
     left_dist = np.linalg.norm(left_eye - nose)
     right_dist = np.linalg.norm(right_eye - nose)
     
     symmetry = 1 - abs(left_dist - right_dist) / max(left_dist, right_dist)
+    print ("\nsymmetry :" , symmetry)
     return float(symmetry)
 
 def calculate_face_ratio(landmarks: dict) -> float:
     """얼굴의 가로 세로 비율을 계산합니다."""
-    left = np.array(landmarks["point_left"])
-    right = np.array(landmarks["point_right"])
-    top = np.array(landmarks["point_top"])
+    left = np.array(landmarks["point_left_eye"])
+    right = np.array(landmarks["point_right_eye"])
+    top = np.array(landmarks["point_forehead"])
     chin = np.array(landmarks["point_chin"])
     
     width = np.linalg.norm(right - left)
     height = np.linalg.norm(chin - top)
-    
+    print ("\nwidth, height :" , width, height)
     return float(width / height) if height != 0 else 0
+
+def determine_face_shape(landmarks: dict) -> str:
+    """얼굴형을 분석합니다."""
+    # 얼굴 비율 계산
+    face_width = np.linalg.norm(
+        np.array(landmarks["point_cheek_left"]) - 
+        np.array(landmarks["point_cheek_right"])
+    )
+    face_height = np.linalg.norm(
+        np.array(landmarks["point_forehead"]) - 
+        np.array(landmarks["point_chin"])
+    )
+    jaw_width = np.linalg.norm(
+        np.array(landmarks["point_jaw_left"]) - 
+        np.array(landmarks["point_jaw_right"])
+    )
+    forehead_width = np.linalg.norm(
+        np.array(landmarks["point_temple_left"]) - 
+        np.array(landmarks["point_temple_right"])
+    )
+    
+    # 비율에 따른 얼굴형 판단
+    ratio = face_width / face_height
+    jaw_ratio = jaw_width / face_width
+    forehead_ratio = forehead_width / face_width
+    
+    if ratio > 0.9:
+        if jaw_ratio < 0.8:
+            return "하트형"
+        else:
+            return "둥근형"
+    else:
+        if jaw_ratio < 0.75:
+            if forehead_ratio > 0.9:
+                return "역삼각형"
+            else:
+                return "계란형"
+        else:
+            if forehead_ratio > 0.9:
+                return "사각형"
+            else:
+                return "긴 얼굴형"
+
+def analyze_jaw_line(landmarks: dict) -> str:
+    """턱선을 분석합니다."""
+    jaw_angle = calculate_angle(
+        landmarks["point_jaw_left"],
+        landmarks["point_chin"],
+        landmarks["point_jaw_right"]
+    )
+    
+    if jaw_angle < 80:
+        return "뾰족한 턱선"
+    elif jaw_angle < 100:
+        return "부드러운 V라인"
+    else:
+        return "둥근 턱선"
+
+def analyze_forehead(landmarks: dict) -> str:
+    """이마 형태를 분석합니다."""
+    forehead_width = np.linalg.norm(
+        np.array(landmarks["point_temple_left"]) - 
+        np.array(landmarks["point_temple_right"])
+    )
+    face_width = np.linalg.norm(
+        np.array(landmarks["point_cheek_left"]) - 
+        np.array(landmarks["point_cheek_right"])
+    )
+    
+    ratio = forehead_width / face_width
+    if ratio > 1.1:
+        return "넓은 이마"
+    elif ratio < 0.9:
+        return "좁은 이마"
+    else:
+        return "균형잡힌 이마"
+
+def analyze_face_proportions(landmarks: dict) -> Dict[str, float]:
+    """얼굴 비율을 분석합니다."""
+    # 삼정비율 계산 (이마:코:턱)
+    forehead_height = np.linalg.norm(
+        np.array(landmarks["point_forehead"]) - 
+        np.array(landmarks["point_left_eyebrow"])
+    )
+    midface_height = np.linalg.norm(
+        np.array(landmarks["point_left_eyebrow"]) - 
+        np.array(landmarks["point_nose_bottom"])
+    )
+    lower_height = np.linalg.norm(
+        np.array(landmarks["point_nose_bottom"]) - 
+        np.array(landmarks["point_chin"])
+    )
+    
+    total_height = forehead_height + midface_height + lower_height
+    print ("\ntotal_height :" , total_height)
+    return {
+        "forehead_ratio": forehead_height / total_height,
+        "midface_ratio": midface_height / total_height,
+        "lower_ratio": lower_height / total_height
+    }
+
+def calculate_angle(p1, p2, p3) -> float:
+    """세 점 사이의 각도를 계산합니다."""
+    v1 = np.array(p1) - np.array(p2)
+    v2 = np.array(p3) - np.array(p2)
+    
+    cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    angle = np.arccos(np.clip(cos_angle, -1.0, 1.0))
+    print ("\nangle :" , np.degrees(angle))
+    return np.degrees(angle)
 
 def browse_image() -> str:
     """파일 브라우저를 열어 이미지 파일을 선택합니다."""
