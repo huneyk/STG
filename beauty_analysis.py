@@ -21,6 +21,13 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 
 app = FastAPI()
 
+# Response 모델 정의
+class ImageAnalysisResponse(BaseModel):
+    face_position: Dict[str, int]
+    eyes_position: Dict[str, Any]
+    landmarks: Dict[str, tuple]
+    confidence: float
+    image_size: Dict[str, int]
 
 # Image Upload Tool
 class ImageUploadInput(BaseModel):
@@ -903,100 +910,148 @@ def save_results(results: Dict[str, Any], output_path: str) -> None:
         json.dump(results, f, indent=4, ensure_ascii=False)
 
 class FaceDetection:
-    """얼굴 검출을 수행하는 클래스"""
-    
     def __init__(self):
-        # OpenCV의 얼굴 검출기 초기화
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
-        self.eye_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_eye.xml'
-        )
-    
-    def detect_faces(self, image: np.ndarray) -> Dict[str, Any]:
-        """
-        이미지에서 얼굴을 검출합니다.
-        
-        Args:
-            image: OpenCV 이미지 배열
-            
-        Returns:
-            검출된 얼굴 정보와 랜드마크를 포함한 딕셔너리
-        """
-        try:
-            # 그레이스케일 변환
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            
-            # 얼굴 검출
-            faces = self.face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.05,
-                minNeighbors=6,
-                minSize=(200, 200)
-            )
-            
-            if len(faces) == 0:
-                raise ValueError("이미지에서 얼굴을 찾을 수 없습니다.")
-            
-            # 가장 큰 얼굴 선택
-            main_face = max(faces, key=lambda f: f[2] * f[3])
-            x, y, w, h = main_face
-            
-            # 얼굴 영역 추출
-            face_region = gray[y:y+h, x:x+w]
-            eyes = self.eye_cascade.detectMultiScale(
-                face_region,
-                scaleFactor=1.1,
-                minNeighbors=6,
-                minSize=(30, 30)
-            )
-            # 검출된 눈 좌표 출력 및 저장
-            eye_positions = []
-            for (ex, ey, ew, eh) in eyes:
-                # 얼굴 영역 내 상대 좌표를 전체 이미지 좌표로 변환
-                abs_x = x + ex
-                abs_y = y + ey
-                print(f"검출된 눈 좌표: x={abs_x}, y={abs_y}, width={ew}, height={eh}")
-                eye_positions.append({
-                    "x": int(abs_x),
-                    "y": int(abs_y),
-                    "width": int(ew),
-                    "height": int(eh)
-                })
+        self.mp_face_mesh = mp.solutions.face_mesh
+        self.mp_drawing = mp.solutions.drawing_utils
+        self.mp_drawing_styles = mp.solutions.drawing_styles
 
-            # 랜드마크 생성
-            landmarks = self._generate_landmarks(x, y, w, h)
+    def detect_faces(self, image: np.ndarray) -> Dict[str, Any]:
+        try:
+            # BGR을 RGB로 변환
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
-            # 얼굴의 상단 부분에서만 눈 검출
-            upper_face = face_region[0:int(h*0.5), :]
-            
-            # 검출된 눈들 중 가장 확실한 두 개만 선택
-            def select_best_eyes(eyes):
-                # 크기순으로 정렬
-                eyes = sorted(eyes, key=lambda x: x[2]*x[3], reverse=True)
-                # 상위 2개만 선택
-                return eyes[:2]
-            
-            selected_eyes = select_best_eyes(eyes)
-            
-            return {
-                "eye_position": selected_eyes,
-                "face_position": {
-                    "x": int(x),
-                    "y": int(y),
-                    "width": int(w),
-                    "height": int(h)
-                },
-                "landmarks": landmarks,
-                "eyes_detected": len(selected_eyes),
-                "confidence": self._calculate_confidence(gray, x, y, w, h),
-                "image_size": {
-                    "width": image.shape[1],
-                    "height": image.shape[0]
+            with self.mp_face_mesh.FaceMesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5
+            ) as face_mesh:
+                results = face_mesh.process(image_rgb)
+
+                if not results.multi_face_landmarks:
+                    raise ValueError("이미지에서 얼굴을 찾을 수 없습니다.")
+
+                landmarks = results.multi_face_landmarks[0]
+                h, w = image.shape[:2]
+
+                # 얼굴 영역 계산
+                x_coordinates = [landmark.x * w for landmark in landmarks.landmark]
+                y_coordinates = [landmark.y * h for landmark in landmarks.landmark]
+                
+                x_min, x_max = int(min(x_coordinates)), int(max(x_coordinates))
+                y_min, y_max = int(min(y_coordinates)), int(max(y_coordinates))
+                
+                # 눈 관련 랜드마크 추출
+                # MediaPipe 눈 랜드마크 인덱스
+                left_eye_indices = [33, 133]   # 왼쪽 눈 중심점
+                right_eye_indices = [362, 263]  # 오른쪽 눈 중심점
+                
+                # 눈 위치 및 크기 계산
+                left_eye_pos = np.mean([[landmarks.landmark[idx].x * w,
+                                       landmarks.landmark[idx].y * h] 
+                                      for idx in left_eye_indices], axis=0)
+                right_eye_pos = np.mean([[landmarks.landmark[idx].x * w,
+                                        landmarks.landmark[idx].y * h] 
+                                       for idx in right_eye_indices], axis=0)
+
+                # 눈 크기 계산
+                left_eye_width = abs(landmarks.landmark[33].x - landmarks.landmark[133].x) * w
+                left_eye_height = abs(landmarks.landmark[159].y - landmarks.landmark[145].y) * h
+                right_eye_width = abs(landmarks.landmark[362].x - landmarks.landmark[263].x) * w
+                right_eye_height = abs(landmarks.landmark[386].y - landmarks.landmark[374].y) * h
+
+                eyes_position = {
+                    "point_left_eye": (int(left_eye_pos[0]), int(left_eye_pos[1])),
+                    "point_right_eye": (int(right_eye_pos[0]), int(right_eye_pos[1])),
+                    "left_eye_width": int(left_eye_width),
+                    "left_eye_height": int(left_eye_height),
+                    "right_eye_width": int(right_eye_width),
+                    "right_eye_height": int(right_eye_height)
                 }
-            }
-            
+
+                # 전체 랜드마크 정보 생성
+                landmarks_dict = {
+                    # 이마
+                    "point_forehead": (
+                        int(landmarks.landmark[10].x * w),
+                        int(landmarks.landmark[10].y * h)
+                    ),
+                    # 눈
+                    "point_left_eye": eyes_position["point_left_eye"],
+                    "point_right_eye": eyes_position["point_right_eye"],
+                    # 코
+                    "point_nose": (
+                        int(landmarks.landmark[4].x * w),
+                        int(landmarks.landmark[4].y * h)
+                    ),
+                    # 입
+                    "point_mouth_left": (
+                        int(landmarks.landmark[61].x * w),
+                        int(landmarks.landmark[61].y * h)
+                    ),
+                    "point_mouth_right": (
+                        int(landmarks.landmark[291].x * w),
+                        int(landmarks.landmark[291].y * h)
+                    ),
+                    # 턱
+                    "point_chin": (
+                        int(landmarks.landmark[152].x * w),
+                        int(landmarks.landmark[152].y * h)
+                    ),
+                    # 볼
+                    "point_cheek_left": (
+                        int(landmarks.landmark[123].x * w),
+                        int(landmarks.landmark[123].y * h)
+                    ),
+                    "point_cheek_right": (
+                        int(landmarks.landmark[352].x * w),
+                        int(landmarks.landmark[352].y * h)
+                    ),
+                    # 턱선
+                    "point_jaw_left": (
+                        int(landmarks.landmark[132].x * w),
+                        int(landmarks.landmark[132].y * h)
+                    ),
+                    "point_jaw_right": (
+                        int(landmarks.landmark[361].x * w),
+                        int(landmarks.landmark[361].y * h)
+                    ),
+                    # 관자놀이
+                    "point_temple_left": (
+                        int(landmarks.landmark[139].x * w),
+                        int(landmarks.landmark[139].y * h)
+                    ),
+                    "point_temple_right": (
+                        int(landmarks.landmark[368].x * w),
+                        int(landmarks.landmark[368].y * h)
+                    ),
+                    # 눈썹
+                    "point_eyebrow_left": (
+                        int(landmarks.landmark[70].x * w),
+                        int(landmarks.landmark[70].y * h)
+                    ),
+                    "point_eyebrow_right": (
+                        int(landmarks.landmark[300].x * w),
+                        int(landmarks.landmark[300].y * h)
+                    )
+                }
+
+                return {
+                    "face_position": {
+                        "x": x_min,
+                        "y": y_min,
+                        "width": x_max - x_min,
+                        "height": y_max - y_min
+                    },
+                    "eyes_position": eyes_position,
+                    "landmarks": landmarks_dict,
+                    "confidence": 1.0,  # MediaPipe는 이미 높은 정확도를 보장
+                    "image_size": {
+                        "width": w,
+                        "height": h
+                    }
+                }
+
         except Exception as e:
             raise ValueError(f"얼굴 검출 중 오류 발생: {str(e)}")
 
@@ -1008,9 +1063,10 @@ class FaceDetection:
             
             # 얼굴 영역 표시
             pos = detection_result["face_position"]
-            x, y = pos["x"], pos["y"]
-            w, h = pos["width"], pos["height"]
-            cv2.rectangle(vis_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.rectangle(vis_image, 
+                        (pos["x"], pos["y"]), 
+                        (pos["x"]+pos["width"], pos["y"]+pos["height"]), 
+                        (0, 255, 0), 2)
             
             # 랜드마크 표시
             for point_name, (px, py) in detection_result["landmarks"].items():
@@ -1018,113 +1074,11 @@ class FaceDetection:
                 cv2.putText(vis_image, point_name, (px, py-5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
             
-            # 신뢰도 표시
-            confidence_text = f"Confidence: {detection_result['confidence']:.2f}"
-            cv2.putText(vis_image, confidence_text, (x, y-10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
             # 결과 저장
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             cv2.imwrite(output_path, vis_image)
             
         except Exception as e:
             raise ValueError(f"시각화 중 오류 발생: {str(e)}")
-
-    def _generate_landmarks(self, x: int, y: int, w: int, h: int) -> dict:
-        """얼굴 영역을 기반으로 더 정확한 랜드마크를 생성합니다."""
-        return {
-            # 이마
-            "point_forehead": (
-                x + w//2,  # 가로 중앙
-                y + int(h * 0.1)  # 상단에서 10% 지점
-            ),
-            
-            # 눈
-            "point_left_eye": (
-                x + int(w * 0.3),  # 왼쪽에서 30% 지점
-                y + int(h * 0.35)  # 상단에서 35% 지점
-            ),
-            "point_right_eye": (
-                x + int(w * 0.7),  # 왼쪽에서 70% 지점
-                y + int(h * 0.35)  # 상단에서 35% 지점
-            ),
-            
-            # 코
-            "point_nose": (
-                x + w//2,  # 가로 중앙
-                y + int(h * 0.5)  # 정중앙
-            ),
-            
-            # 입
-            "point_mouth_left": (
-                x + int(w * 0.35),  # 왼쪽에서 35% 지점
-                y + int(h * 0.7)  # 상단에서 70% 지점
-            ),
-            "point_mouth_right": (
-                x + int(w * 0.65),  # 왼쪽에서 65% 지점
-                y + int(h * 0.7)  # 상단에서 70% 지점
-            ),
-            
-            # 턱
-            "point_chin": (
-                x + w//2,  # 가로 중앙
-                y + int(h * 0.95)  # 상단에서 95% 지점
-            ),
-            
-            # 볼
-            "point_cheek_left": (
-                x + int(w * 0.1),  # 왼쪽에서 10% 지점
-                y + int(h * 0.5)  # 중앙 높이
-            ),
-            "point_cheek_right": (
-                x + int(w * 0.9),  # 왼쪽에서 90% 지점
-                y + int(h * 0.5)  # 중앙 높이
-            ),
-            
-            # 턱선
-            "point_jaw_left": (
-                x + int(w * 0.15),  # 왼쪽에서 15% 지점
-                y + int(h * 0.8)  # 상단에서 80% 지점
-            ),
-            "point_jaw_right": (
-                x + int(w * 0.85),  # 왼쪽에서 85% 지점
-                y + int(h * 0.8)  # 상단에서 80% 지점
-            ),
-            
-            # 관자놀이
-            "point_temple_left": (
-                x + int(w * 0.15),  # 왼쪽에서 15% 지점
-                y + int(h * 0.2)  # 상단에서 20% 지점
-            ),
-            "point_temple_right": (
-                x + int(w * 0.85),  # 왼쪽에서 85% 지점
-                y + int(h * 0.2)  # 상단에서 20% 지점
-            ),
-            
-            # 눈썹
-            "point_eyebrow_left": (
-                x + int(w * 0.3),  # 왼쪽에서 30% 지점
-                y + int(h * 0.25)  # 상단에서 25% 지점
-            ),
-            "point_eyebrow_right": (
-                x + int(w * 0.7),  # 왼쪽에서 70% 지점
-                y + int(h * 0.25)  # 상단에서 25% 지점
-            )
-        }
-    
-    def _calculate_confidence(self, gray_image: np.ndarray, x: int, y: int, w: int, h: int) -> float:
-        """얼굴 검출 신뢰도를 계산합니다."""
-        face_region = gray_image[y:y+h, x:x+w]
-        mean_intensity = np.mean(face_region)
-        std_intensity = np.std(face_region)
-        return float(min(1.0, (std_intensity / mean_intensity) * 0.5))
-
-class ImageAnalysisResponse(BaseModel):
-    """이미지 분석 결과 응답 모델"""
-    face_detection: Dict[str, Any]
-    face_characteristics: Dict[str, Any]
-    measurements: Dict[str, Any]
-    skin_analysis: Dict[str, Any]
 
 # 전역 인스턴스 생성
 face_detector = FaceDetection()
@@ -1196,7 +1150,6 @@ def main():
         tk.messagebox.showinfo("분석 완료", 
             f"얼굴 분석이 완료되었습니다.\n\n"
             f"검출된 얼굴 신뢰도: {result['confidence']:.2f}\n"
-            f"검출된 눈 개수: {result['eyes_detected']}\n\n"
             f"결과 이미지가 저장된 경로:\n{output_path}"
         )
         
