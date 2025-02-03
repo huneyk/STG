@@ -21,11 +21,12 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 
 app = FastAPI()
 
+
 # Image Upload Tool
 class ImageUploadInput(BaseModel):
     """Image upload tool input."""
     file_path: Optional[str] = Field(description="Path to the image file", default=None)
-
+'''
 class ImageUpload:
     """Image upload tool implementation."""
     
@@ -54,6 +55,7 @@ class ImageUpload:
         """업로드된 파일을 삭제합니다."""
         if os.path.exists(file_path):
             os.remove(file_path)
+'''          
 
 class ImageUploadTool(BaseTool):
     name: str = "image_upload"
@@ -164,6 +166,7 @@ class FacialLandmarksTool(BaseTool):
                     "eye_distance": 70
                 }
             }
+            print ("\nFacialLandmarksTool - landmarks :" , landmarks)
             return landmarks
         except Exception as e:
             return {"error": str(e)}
@@ -928,9 +931,9 @@ class FaceDetection:
             # 얼굴 검출
             faces = self.face_cascade.detectMultiScale(
                 gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30)
+                scaleFactor=1.05,
+                minNeighbors=6,
+                minSize=(200, 200)
             )
             
             if len(faces) == 0:
@@ -942,12 +945,43 @@ class FaceDetection:
             
             # 얼굴 영역 추출
             face_region = gray[y:y+h, x:x+w]
-            eyes = self.eye_cascade.detectMultiScale(face_region)
-            
+            eyes = self.eye_cascade.detectMultiScale(
+                face_region,
+                scaleFactor=1.1,
+                minNeighbors=6,
+                minSize=(30, 30)
+            )
+            # 검출된 눈 좌표 출력 및 저장
+            eye_positions = []
+            for (ex, ey, ew, eh) in eyes:
+                # 얼굴 영역 내 상대 좌표를 전체 이미지 좌표로 변환
+                abs_x = x + ex
+                abs_y = y + ey
+                print(f"검출된 눈 좌표: x={abs_x}, y={abs_y}, width={ew}, height={eh}")
+                eye_positions.append({
+                    "x": int(abs_x),
+                    "y": int(abs_y),
+                    "width": int(ew),
+                    "height": int(eh)
+                })
+
             # 랜드마크 생성
             landmarks = self._generate_landmarks(x, y, w, h)
             
+            # 얼굴의 상단 부분에서만 눈 검출
+            upper_face = face_region[0:int(h*0.5), :]
+            
+            # 검출된 눈들 중 가장 확실한 두 개만 선택
+            def select_best_eyes(eyes):
+                # 크기순으로 정렬
+                eyes = sorted(eyes, key=lambda x: x[2]*x[3], reverse=True)
+                # 상위 2개만 선택
+                return eyes[:2]
+            
+            selected_eyes = select_best_eyes(eyes)
+            
             return {
+                "eye_position": selected_eyes,
                 "face_position": {
                     "x": int(x),
                     "y": int(y),
@@ -955,7 +989,7 @@ class FaceDetection:
                     "height": int(h)
                 },
                 "landmarks": landmarks,
-                "eyes_detected": len(eyes),
+                "eyes_detected": len(selected_eyes),
                 "confidence": self._calculate_confidence(gray, x, y, w, h),
                 "image_size": {
                     "width": image.shape[1],
