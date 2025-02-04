@@ -329,7 +329,6 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
             
             landmarks = results.multi_face_landmarks[0]
             
-            # 주요 랜드마크 포인트 매핑
             landmarks_dict = {
                 # 눈
                 "point_left_eye": (int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)),
@@ -339,10 +338,16 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
                 "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),
                 
                 # 입술 (MediaPipe Face Mesh의 입술 랜드마크 수정)
-                "point_mouth_left": (int(landmarks.landmark[57].x * w), int(landmarks.landmark[57].y * h)),      # 입술 좌측
-                "point_mouth_right": (int(landmarks.landmark[287].x * w), int(landmarks.landmark[287].y * h)),   # 입술 우측
-                "point_upper_lip": (int(landmarks.landmark[37].x * w), int(landmarks.landmark[37].y * h)),       # 윗입술 상단 중앙
-                "point_lower_lip": (int(landmarks.landmark[84].x * w), int(landmarks.landmark[84].y * h)),       # 아랫입술 하단 중앙
+                "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),      # 입술 좌측
+                "point_mouth_right": (int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)),   # 입술 우측
+                "point_upper_lip": (int(landmarks.landmark[13].x * w), int(landmarks.landmark[13].y * h)),       # 윗입술 중앙
+                "point_lower_lip": (int(landmarks.landmark[14].x * w), int(landmarks.landmark[14].y * h)),       # 아랫입술 중앙
+                
+                # 입술 높이 측정을 위한 추가 랜드마크
+                "point_upper_lip_top": (int(landmarks.landmark[37].x * w), int(landmarks.landmark[37].y * h)),      # 윗입술 상단 중앙
+                "point_lower_lip_bottom": (int(landmarks.landmark[84].x * w), int(landmarks.landmark[84].y * h)),   # 아랫입술 하단 중앙
+                "point_upper_lip_outer": (int(landmarks.landmark[0].x * w), int(landmarks.landmark[0].y * h)),      # 윗입술 외곽선 중앙
+                "point_lower_lip_outer": (int(landmarks.landmark[17].x * w), int(landmarks.landmark[17].y * h)),    # 아랫입술 외곽선 중앙
                 
                 # 얼굴 윤곽
                 "point_chin": (int(landmarks.landmark[152].x * w), int(landmarks.landmark[152].y * h)),
@@ -357,10 +362,9 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
             
             # 디버깅을 위한 랜드마크 출력
             print("\n입술 랜드마크 좌표:")
-            print(f"좌측: {landmarks_dict['point_mouth_left']}")
-            print(f"우측: {landmarks_dict['point_mouth_right']}")
-            print(f"상단: {landmarks_dict['point_upper_lip']}")
-            print(f"하단: {landmarks_dict['point_lower_lip']}")
+            for key, value in landmarks_dict.items():
+                if 'lip' in key or 'mouth' in key:
+                    print(f"{key}: {value}")
             
             return landmarks_dict
             
@@ -692,9 +696,13 @@ def analyze_lips(landmarks: dict) -> Dict[str, Any]:
             
         try:
             lip_height = calculate_distance(
-                landmarks["point_upper_lip"], 
-                landmarks["point_lower_lip"]
+                landmarks["point_upper_lip_top"], 
+                landmarks["point_lower_lip_bottom"]
             )
+
+            print ("\n\npoint_upper_lip_top :" , landmarks["point_upper_lip_top"])
+            print ("\npoint_lower_lip_bottom :" , landmarks["point_lower_lip_bottom"])
+            
         except:
             print("입술 높이 측정 실패")
             lip_height = 0
@@ -1034,7 +1042,17 @@ class FaceDetection:
                     "point_eyebrow_right": (
                         int(landmarks.landmark[300].x * w),
                         int(landmarks.landmark[300].y * h)
-                    )
+                    ),
+                    # 입술 랜드마크 (MediaPipe Face Mesh의 정확한 입술 포인트)
+                    "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),      # 입술 좌측
+                    "point_mouth_right": (int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)),   # 입술 우측
+                    "point_upper_lip": (int(landmarks.landmark[13].x * w), int(landmarks.landmark[13].y * h)),       # 윗입술 중앙
+                    "point_lower_lip": (int(landmarks.landmark[14].x * w), int(landmarks.landmark[14].y * h)),       # 아랫입술 중앙
+                    # 입술 높이 측정을 위한 추가 랜드마크
+                    "point_upper_lip_top": (int(landmarks.landmark[37].x * w), int(landmarks.landmark[37].y * h)),      # 윗입술 상단 중앙
+                    "point_lower_lip_bottom": (int(landmarks.landmark[84].x * w), int(landmarks.landmark[84].y * h)),   # 아랫입술 하단 중앙
+                    "point_upper_lip_outer": (int(landmarks.landmark[0].x * w), int(landmarks.landmark[0].y * h)),      # 윗입술 외곽선 중앙
+                    "point_lower_lip_outer": (int(landmarks.landmark[17].x * w), int(landmarks.landmark[17].y * h)),    # 아랫입술 외곽선 중앙
                 }
 
                 # 신뢰도 계산: 주요 랜드마크들의 정확도 평가
@@ -1096,6 +1114,113 @@ class FaceDetection:
             
         except Exception as e:
             raise ValueError(f"시각화 중 오류 발생: {str(e)}")
+
+def visualize_landmarks(image: np.ndarray, landmarks: dict, analysis_results: dict = None) -> np.ndarray:
+    """랜드마크와 분석 결과를 이미지에 시각화합니다."""
+    vis_image = image.copy()
+    
+    # 색상 정의 (BGR 형식)
+    COLORS = {
+        'eyes': (255, 128, 0),     # 파란색 계열
+        'nose': (0, 255, 0),       # 녹색
+        'lips': (0, 0, 255),       # 빨간색
+        'face': (255, 255, 0),     # 청록색
+        'text': (255, 255, 255),   # 흰색
+        'measure': (0, 255, 255),  # 노란색
+        'result': (147, 20, 255)   # 분홍색
+    }
+    
+    try:
+        # 기존 랜드마크 표시 코드...
+        
+        # 눈 위치 분석 결과 표시
+        if analysis_results and 'eyes_position' in analysis_results:
+            eye_pos = analysis_results['eyes_position']
+            left_eye = landmarks['point_left_eye']
+            right_eye = landmarks['point_right_eye']
+            mid_y = (left_eye[1] + right_eye[1]) // 2
+            mid_x = (left_eye[0] + right_eye[0]) // 2
+            
+            # 눈 수평선
+            cv2.line(vis_image, (0, mid_y), (vis_image.shape[1], mid_y), COLORS['measure'], 1)
+            
+            # 눈 위치 텍스트
+            position_text = f"Eyes: {eye_pos['position']} ({eye_pos['ratio']:.2f})"
+            level_text = f"Level: {eye_pos['level']}"
+            
+            # 텍스트 배경
+            (text_width, text_height), _ = cv2.getTextSize(position_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(vis_image, 
+                        (mid_x - text_width//2 - 5, mid_y - 45),
+                        (mid_x + text_width//2 + 5, mid_y - 5),
+                        (0, 0, 0), -1)
+            
+            # 텍스트 표시
+            cv2.putText(vis_image, position_text,
+                      (mid_x - text_width//2, mid_y - 25),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
+            cv2.putText(vis_image, level_text,
+                      (mid_x - text_width//2, mid_y - 10),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
+        
+        # 입술 위치 분석 결과 표시
+        if analysis_results and 'lips_position' in analysis_results:
+            lip_pos = analysis_results['lips_position']
+            left_mouth = landmarks['point_mouth_left']
+            right_mouth = landmarks['point_mouth_right']
+            mid_y = (left_mouth[1] + right_mouth[1]) // 2
+            mid_x = (left_mouth[0] + right_mouth[0]) // 2
+            
+            # 입술 수평선
+            cv2.line(vis_image, (0, mid_y), (vis_image.shape[1], mid_y), COLORS['measure'], 1)
+            
+            # 입술 위치 텍스트
+            position_text = f"Lips: {lip_pos['position']} ({lip_pos['ratio']:.2f})"
+            level_text = f"Level: {lip_pos['level']}"
+            
+            # 텍스트 배경
+            (text_width, text_height), _ = cv2.getTextSize(position_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(vis_image, 
+                        (mid_x - text_width//2 - 5, mid_y + 5),
+                        (mid_x + text_width//2 + 5, mid_y + 45),
+                        (0, 0, 0), -1)
+            
+            # 텍스트 표시
+            cv2.putText(vis_image, position_text,
+                      (mid_x - text_width//2, mid_y + 25),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
+            cv2.putText(vis_image, level_text,
+                      (mid_x - text_width//2, mid_y + 40),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
+        
+        # 측정값 표시 (우측)
+        measurements_text = []
+        if 'point_mouth_left' in landmarks and 'point_mouth_right' in landmarks:
+            width = calculate_distance(landmarks['point_mouth_left'], landmarks['point_mouth_right'])
+            measurements_text.append(f"Lip Width: {width:.2f}")
+        
+        if 'point_upper_lip_top' in landmarks and 'point_lower_lip_bottom' in landmarks:
+            height = calculate_distance(landmarks['point_upper_lip_top'], landmarks['point_lower_lip_bottom'])
+            measurements_text.append(f"Lip Height: {height:.2f}")
+        
+        # 우측에 측정값 표시
+        start_y = 30
+        for i, text in enumerate(measurements_text):
+            y_pos = start_y + (i * 30)
+            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.rectangle(vis_image, 
+                        (vis_image.shape[1] - text_width - 20, y_pos - text_height - 5),
+                        (vis_image.shape[1] - 10, y_pos + 5),
+                        (0, 0, 0), -1)
+            cv2.putText(vis_image, text, 
+                      (vis_image.shape[1] - text_width - 15, y_pos), 
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLORS['text'], 2)
+        
+        return vis_image
+        
+    except Exception as e:
+        print(f"랜드마크 시각화 중 오류 발생: {str(e)}")
+        return image
 
 @app.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
