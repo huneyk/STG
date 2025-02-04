@@ -1,7 +1,7 @@
 # Standard library imports
 import json
 from textwrap import dedent
-from typing import Optional, Type, List, Dict, Any
+from typing import Optional, Type, List, Dict, Any, Tuple
 
 # Third-party imports
 from crewai import Agent, Task, Crew
@@ -18,8 +18,23 @@ import mediapipe as mp
 import shutil
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
+import logging
+import absl.logging
 
 app = FastAPI()
+
+# 경고 메시지 숨기기
+logging.getLogger('mediapipe').setLevel(logging.ERROR)
+absl.logging.set_verbosity(absl.logging.ERROR)
+
+# OpenCV 경고 숨기기
+def suppress_qt_warnings():
+    os.environ["QT_DEVICE_PIXEL_RATIO"] = "0"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    os.environ["QT_SCREEN_SCALE_FACTORS"] = "1"
+    os.environ["QT_SCALE_FACTOR"] = "1"
+
+suppress_qt_warnings()
 
 # Response 모델 정의
 class ImageAnalysisResponse(BaseModel):
@@ -148,37 +163,82 @@ class FacialLandmarksTool(BaseTool):
 
     def _run(self, image_path: str, face_location: list):
         try:
-            # 실제 구현에서는 dlib 또는 MediaPipe 사용
-            image = cv2.imread(image_path)
-            landmarks = {
-                "face_shape": self._analyze_face_shape(image),
-                "features": {
-                    "eyes": {
-                        "left": {"center": [100, 100], "width": 30, "height": 15},
-                        "right": {"center": [170, 100], "width": 30, "height": 15}
+            # MediaPipe Face Mesh 초기화
+            mp_face_mesh = mp.solutions.face_mesh
+            with mp_face_mesh.FaceMesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5
+            ) as face_mesh:
+                # 이미지 로드 및 처리
+                image = cv2.imread(image_path)
+                if image is None:
+                    raise FileNotFoundError(f"이미지를 불러올 수 없습니다: {image_path}")
+                
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                results = face_mesh.process(image_rgb)
+                
+                if not results.multi_face_landmarks:
+                    raise ValueError("얼굴을 찾을 수 없습니다.")
+                
+                landmarks = results.multi_face_landmarks[0]
+                h, w = image.shape[:2]
+                
+                # 랜드마크 분석 결과 생성
+                landmarks_dict = {
+                    "face_shape": self._analyze_face_shape(landmarks, w, h),
+                    "features": {
+                        "eyes": {
+                            "left": {
+                                "center": [int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)],
+                                "width": int(abs(landmarks.landmark[133].x - landmarks.landmark[33].x) * w),
+                                "height": int(abs(landmarks.landmark[145].y - landmarks.landmark[159].y) * h)
+                            },
+                            "right": {
+                                "center": [int(landmarks.landmark[263].x * w), int(landmarks.landmark[263].y * h)],
+                                "width": int(abs(landmarks.landmark[263].x - landmarks.landmark[362].x) * w),
+                                "height": int(abs(landmarks.landmark[374].y - landmarks.landmark[386].y) * h)
+                            }
+                        },
+                        "nose": {
+                            "bridge": [
+                                [int(landmarks.landmark[168].x * w), int(landmarks.landmark[168].y * h)],
+                                [int(landmarks.landmark[6].x * w), int(landmarks.landmark[6].y * h)]
+                            ],
+                            "tip": [int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)]
+                        },
+                        "mouth": {
+                            "corners": [
+                                [int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)],
+                                [int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)]
+                            ],
+                            "lips": {
+                                "upper": [[int(landmarks.landmark[13].x * w), int(landmarks.landmark[13].y * h)]],
+                                "lower": [[int(landmarks.landmark[14].x * w), int(landmarks.landmark[14].y * h)]]
+                            }
+                        },
+                        "jawline": [
+                            [int(landmarks.landmark[132].x * w), int(landmarks.landmark[132].y * h)],
+                            [int(landmarks.landmark[152].x * w), int(landmarks.landmark[152].y * h)],
+                            [int(landmarks.landmark[361].x * w), int(landmarks.landmark[361].y * h)]
+                        ]
                     },
-                    "nose": {
-                        "bridge": [[135, 90], [135, 120]],
-                        "tip": [135, 130]
-                    },
-                    "mouth": {
-                        "corners": [[120, 150], [150, 150]],
-                        "lips": {"upper": [[135, 145]], "lower": [[135, 155]]}
-                    },
-                    "jawline": [[90, 160], [135, 180], [180, 160]]
-                },
-                "measurements": {
-                    "face_width": 180,
-                    "face_height": 220,
-                    "eye_distance": 70
+                    "measurements": {
+                        "face_width": int(abs(landmarks.landmark[352].x - landmarks.landmark[123].x) * w),
+                        "face_height": int(abs(landmarks.landmark[10].y - landmarks.landmark[152].y) * h),
+                        "eye_distance": int(abs(landmarks.landmark[263].x - landmarks.landmark[33].x) * w)
+                    }
                 }
-            }
-            print ("\nFacialLandmarksTool - landmarks :" , landmarks)
-            return landmarks
+                
+                print("\nFacialLandmarksTool - landmarks:", landmarks_dict)
+                return landmarks_dict
+                
         except Exception as e:
+            print(f"랜드마크 검출 중 오류 발생: {str(e)}")
             return {"error": str(e)}
 
-    def _analyze_face_shape(self, image):
+    def _analyze_face_shape(self, landmarks, w, h):
         # 실제 구현에서는 이미지 분석을 통한 얼굴형 판단
         return "oval"  # 예시 반환값
 
@@ -504,57 +564,89 @@ class ReportGeneratorTool(BaseTool):
         except Exception as e:
             return {"error": f"Image analysis failed: {str(e)}"}
     
-def load_image(image_path: str) -> np.ndarray:
-    """이미지를 로드하고 반환합니다."""
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(f"이미지를 불러올 수 없습니다: {image_path}")
-    return image
+def process_image(image_path: str) -> Tuple[np.ndarray, mp.solutions.face_mesh.FaceMesh]:
+    """MediaPipe를 사용하여 이미지를 처리합니다."""
+    try:
+        # MediaPipe Face Mesh 초기화
+        mp_face_mesh = mp.solutions.face_mesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        )
+
+        # 이미지 로드
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"이미지를 불러올 수 없습니다: {image_path}")
+
+        # BGR을 RGB로 변환 및 처리
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(image_rgb)
+
+        if not results.multi_face_landmarks:
+            raise ValueError("얼굴을 찾을 수 없습니다.")
+
+        return image, results.multi_face_landmarks[0]
+
+    except Exception as e:
+        raise ValueError(f"이미지 처리 중 오류 발생: {str(e)}")
 
 def detect_face_landmarks(image: np.ndarray) -> dict:
-    """OpenCV의 얼굴 검출기를 사용하여 더 상세한 얼굴 특징점을 검출합니다."""
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-    
-    if len(faces) == 0:
-        raise Exception("얼굴을 찾을 수 없습니다.")
-    
-    x, y, w, h = faces[0]
-    
-    # 더 상세한 얼굴 특징점 생성
-    landmarks_dict = {
-        # 눈
-        "point_left_eye": (x + w//4, y + h//3),
-        "point_right_eye": (x + 3*w//4, y + h//3),
-        
-        # 눈썹
-        "point_left_eyebrow": (x + w//4, y + h//4),
-        "point_right_eyebrow": (x + 3*w//4, y + h//4),
-        
-        # 코
-        "point_nose_top": (x + w//2, y + 2*h//5),
-        "point_nose_bottom": (x + w//2, y + h//2),
-        
-        # 입
-        "point_mouth_left": (x + w//3, y + 2*h//3),
-        "point_mouth_right": (x + 2*w//3, y + 2*h//3),
-        "point_mouth_top": (x + w//2, y + 5*h//8),
-        "point_mouth_bottom": (x + w//2, y + 7*h//10),
-        
-        # 얼굴 윤곽
-        "point_forehead": (x + w//2, y + h//8),
-        "point_chin": (x + w//2, y + h),
-        "point_jaw_left": (x, y + 3*h//4),
-        "point_jaw_right": (x + w, y + 3*h//4),
-        "point_cheek_left": (x, y + h//2),
-        "point_cheek_right": (x + w, y + h//2),
-        "point_temple_left": (x, y + h//4),
-        "point_temple_right": (x + w, y + h//4)
-    }
-    print ("\nlandmarks_dict :" , landmarks_dict)
-    return landmarks_dict
+    """MediaPipe를 사용하여 얼굴 특징점을 검출합니다."""
+    try:
+        mp_face_mesh = mp.solutions.face_mesh
+        with mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        ) as face_mesh:
+            # BGR을 RGB로 변환
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w = image.shape[:2]
+            
+            # MediaPipe로 얼굴 랜드마크 검출
+            results = face_mesh.process(image_rgb)
+            
+            if not results.multi_face_landmarks:
+                raise ValueError("얼굴을 찾을 수 없습니다.")
+            
+            landmarks = results.multi_face_landmarks[0]
+            
+            # 주요 랜드마크 포인트 매핑
+            landmarks_dict = {
+                # 눈
+                "point_left_eye": (int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)),
+                "point_right_eye": (int(landmarks.landmark[263].x * w), int(landmarks.landmark[263].y * h)),
+                
+                # 눈썹
+                "point_left_eyebrow": (int(landmarks.landmark[282].x * w), int(landmarks.landmark[282].y * h)),
+                "point_right_eyebrow": (int(landmarks.landmark[52].x * w), int(landmarks.landmark[52].y * h)),
+                
+                # 코
+                "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),
+                
+                # 입
+                "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),
+                "point_mouth_right": (int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)),
+                
+                # 얼굴 윤곽
+                "point_forehead": (int(landmarks.landmark[10].x * w), int(landmarks.landmark[10].y * h)),
+                "point_chin": (int(landmarks.landmark[152].x * w), int(landmarks.landmark[152].y * h)),
+                "point_jaw_left": (int(landmarks.landmark[132].x * w), int(landmarks.landmark[132].y * h)),
+                "point_jaw_right": (int(landmarks.landmark[361].x * w), int(landmarks.landmark[361].y * h)),
+                "point_cheek_left": (int(landmarks.landmark[123].x * w), int(landmarks.landmark[123].y * h)),
+                "point_cheek_right": (int(landmarks.landmark[352].x * w), int(landmarks.landmark[352].y * h)),
+                "point_temple_left": (int(landmarks.landmark[139].x * w), int(landmarks.landmark[139].y * h)),
+                "point_temple_right": (int(landmarks.landmark[368].x * w), int(landmarks.landmark[368].y * h))
+            }
+            
+            return landmarks_dict
+            
+    except Exception as e:
+        raise ValueError(f"랜드마크 검출 중 오류 발생: {str(e)}")
 
 def analyze_beauty_features(landmarks: dict, image: np.ndarray) -> Dict[str, Any]:
     """더 상세한 얼굴 분석을 수행합니다."""
@@ -764,7 +856,7 @@ def calculate_face_ratio(landmarks: dict) -> float:
 
 def determine_face_shape(landmarks: dict) -> str:
     """얼굴형을 분석합니다."""
-    # 얼굴 비율 계산
+    # 얼굴 너비 계산
     face_width = np.linalg.norm(
         np.array(landmarks["point_cheek_left"]) - 
         np.array(landmarks["point_cheek_right"])
@@ -849,6 +941,62 @@ def analyze_forehead(landmarks: dict) -> str:
         print ("\n균형잡힌 이마")
         return "균형잡힌 이마"
 
+def analyze_lips(landmarks: dict) -> Dict[str, Any]:
+    """입술의 특징을 분석합니다."""
+    try:
+        # 입술 너비 계산
+        lip_width = calculate_distance(landmarks["point_mouth_left"], landmarks["point_mouth_right"])
+        face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
+        
+        # 입술 비율 계산
+        lip_ratio = lip_width / face_width
+        
+        # 입술 높이 계산 (코끝에서 입술까지의 거리)
+        lip_height = calculate_distance(landmarks["point_nose"], landmarks["point_mouth_left"])
+        face_height = calculate_distance(landmarks["point_forehead"], landmarks["point_chin"])
+        height_ratio = lip_height / face_height
+        
+        # 입술 특징 분석
+        characteristics = []
+        if lip_ratio > 0.45:
+            characteristics.append("넓은 입술")
+        elif lip_ratio < 0.35:
+            characteristics.append("좁은 입술")
+        else:
+            characteristics.append("균형잡힌 입술")
+            
+        if height_ratio > 0.2:
+            characteristics.append("두꺼운 입술")
+        elif height_ratio < 0.15:
+            characteristics.append("얇은 입술")
+        else:
+            characteristics.append("적당한 두께의 입술")
+            
+        return {
+            "lip_width_ratio": float(lip_ratio),
+            "lip_height_ratio": float(height_ratio),
+            "characteristics": characteristics
+        }
+        
+    except Exception as e:
+        print(f"입술 분석 중 오류 발생: {str(e)}")
+        return {
+            "lip_width_ratio": 0.0,
+            "lip_height_ratio": 0.0,
+            "characteristics": ["분석 불가"]
+        }
+
+def analyze_jaw(landmarks: dict) -> Dict[str, Any]:
+    jaw_width = calculate_distance(landmarks["point_jaw_left"], landmarks["point_jaw_right"])
+    face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
+    return {"jaw_ratio": jaw_width / face_width}
+
+def analyze_forehead(landmarks: dict) -> Dict[str, Any]:
+    forehead_width = calculate_distance(landmarks["point_temple_left"], landmarks["point_temple_right"])
+    face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
+    return {"forehead_ratio": forehead_width / face_width}
+
+
 def analyze_face_proportions(landmarks: dict) -> Dict[str, float]:
     """얼굴 비율을 분석합니다."""
     # 삼정비율 계산 (이마:코:턱)
@@ -856,14 +1004,17 @@ def analyze_face_proportions(landmarks: dict) -> Dict[str, float]:
         np.array(landmarks["point_forehead"]) - 
         np.array(landmarks["point_left_eyebrow"])
     )
+    
     midface_height = np.linalg.norm(
         np.array(landmarks["point_left_eyebrow"]) - 
         np.array(landmarks["point_nose_bottom"])
     )
+    
     lower_height = np.linalg.norm(
         np.array(landmarks["point_nose_bottom"]) - 
         np.array(landmarks["point_chin"])
     )
+    
     
     total_height = forehead_height + midface_height + lower_height
     print ("\ntotal_height :" , total_height)
@@ -917,23 +1068,24 @@ class FaceDetection:
 
     def detect_faces(self, image: np.ndarray) -> Dict[str, Any]:
         try:
-            # BGR을 RGB로 변환
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
             with self.mp_face_mesh.FaceMesh(
                 static_image_mode=True,
                 max_num_faces=1,
                 refine_landmarks=True,
                 min_detection_confidence=0.5
             ) as face_mesh:
+                # BGR을 RGB로 변환
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                h, w = image.shape[:2]
+                
+                # MediaPipe로 얼굴 랜드마크 검출
                 results = face_mesh.process(image_rgb)
 
                 if not results.multi_face_landmarks:
                     raise ValueError("이미지에서 얼굴을 찾을 수 없습니다.")
 
                 landmarks = results.multi_face_landmarks[0]
-                h, w = image.shape[:2]
-
+                
                 # 얼굴 영역 계산
                 x_coordinates = [landmark.x * w for landmark in landmarks.landmark]
                 y_coordinates = [landmark.y * h for landmark in landmarks.landmark]
@@ -1036,6 +1188,22 @@ class FaceDetection:
                     )
                 }
 
+                # 신뢰도 계산: 주요 랜드마크들의 정확도 평가
+                key_landmarks = [
+                    landmarks.landmark[1],    # 코
+                    landmarks.landmark[33],   # 왼쪽 눈
+                    landmarks.landmark[263],  # 오른쪽 눈
+                    landmarks.landmark[61],   # 입 왼쪽
+                    landmarks.landmark[291],  # 입 오른쪽
+                    landmarks.landmark[152],  # 턱
+                    landmarks.landmark[10]    # 이마
+                ]
+                
+                # z 좌표의 표준편차를 이용한 신뢰도 계산
+                z_coords = [lm.z for lm in key_landmarks]
+                z_std = np.std(z_coords)
+                confidence = 1.0 / (1.0 + z_std)  # z 좌표가 일정할수록 높은 신뢰도
+                
                 return {
                     "face_position": {
                         "x": x_min,
@@ -1045,7 +1213,7 @@ class FaceDetection:
                     },
                     "eyes_position": eyes_position,
                     "landmarks": landmarks_dict,
-                    "confidence": 1.0,  # MediaPipe는 이미 높은 정확도를 보장
+                    "confidence": float(confidence),  # 새로운 신뢰도 계산 방식
                     "image_size": {
                         "width": w,
                         "height": h
@@ -1116,6 +1284,10 @@ async def analyze_image(file: UploadFile = File(...)):
 
 def main():
     try:
+        # 출력 디렉토리 설정
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        
         print("얼굴 분석 프로그램을 시작합니다...")
         
         # 이미지 파일 브라우저로 선택
@@ -1136,8 +1308,6 @@ def main():
         print("검출 결과:", result)
         
         # 결과 저장 경로 생성
-        output_dir = "output"
-        os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, f"detected_{os.path.basename(image_path)}")
         
         # 결과 시각화
@@ -1160,19 +1330,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-def analyze_lips(landmarks: dict) -> Dict[str, Any]:
-    lip_width = calculate_distance(landmarks["point_mouth_left"], landmarks["point_mouth_right"])
-    face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
-    return {"lip_width_ratio": lip_width / face_width}
-
-def analyze_jaw(landmarks: dict) -> Dict[str, Any]:
-    jaw_width = calculate_distance(landmarks["point_jaw_left"], landmarks["point_jaw_right"])
-    face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
-    return {"jaw_ratio": jaw_width / face_width}
-
-def analyze_forehead(landmarks: dict) -> Dict[str, Any]:
-    forehead_width = calculate_distance(landmarks["point_temple_left"], landmarks["point_temple_right"])
-    face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
-    return {"forehead_ratio": forehead_width / face_width}
 
