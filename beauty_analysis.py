@@ -676,13 +676,13 @@ def analyze_jaw_line(landmarks: dict) -> str:
     
     if jaw_angle < 80:
         print ("\n뾰족한 턱선") 
-        return "뾰족한 턱선"
+        return "뾰족한 턱선", jaw_angle
     elif jaw_angle < 100:
         print ("\n부드러운 V라인")
-        return "부드러운 V라인"
+        return "부드러운 V라인", jaw_angle
     else:
         print ("\n둥근 턱선")
-        return "둥근 턱선"
+        return "둥근 턱선", jaw_angle
 
 def analyze_forehead(landmarks: dict) -> str:
     """이마 형태를 분석합니다."""
@@ -912,10 +912,27 @@ def browse_image() -> str:
     
     return file_path
 
-def save_results(results: Dict[str, Any], output_path: str) -> None:
+def save_analysis_results(results: Dict[str, Any], output_path: str):
     """분석 결과를 JSON 파일로 저장합니다."""
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
+    try:
+        # 저장할 데이터 구성
+        output_data = {
+            "eyes_position": results["eyes"]["eyes_position"],
+            "nose_position": results["nose"]["nose_position"],
+            "lips_position": results["lips"]["lips_position"],
+            "jaw_angle": results["jaw"]["jaw_angle"],
+            "shape_details": results["shape_details"],
+            "ratios": results["ratios"],
+            "symmetry_scores": results["symmetry_scores"]
+        }
+        
+        # JSON 파일로 저장
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+            
+    except Exception as e:
+        print(f"결과 저장 중 오류 발생: {str(e)}")
+        print(f"Results content: {results}")  # 디버깅을 위한 결과 내용 출력
 
 class FaceAnalyzer:
     """얼굴 분석을 위한 메인 클래스"""
@@ -948,7 +965,7 @@ class FaceAnalyzer:
                 "analysis": analysis_result,
                 "output_image": output_path
             }
-            save_results(results, os.path.join(output_dir, "analysis_results.json"))
+            save_analysis_results(results, os.path.join(output_dir, "analysis_results.json"))
             
             return results
             
