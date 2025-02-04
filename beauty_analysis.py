@@ -334,8 +334,10 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
                 "point_left_eye": (int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)),
                 "point_right_eye": (int(landmarks.landmark[263].x * w), int(landmarks.landmark[263].y * h)),
                 
-                # 코
-                "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),
+                # 코 랜드마크 수정
+                "point_nose_top": (int(landmarks.landmark[168].x * w), int(landmarks.landmark[168].y * h)),    # 콧대 시작점
+                "point_nose_tip": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),        # 코끝
+                "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),           # 기존 코끝 포인트 유지
                 
                 # 입술 (MediaPipe Face Mesh의 입술 랜드마크 수정)
                 "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),      # 입술 좌측
@@ -361,9 +363,9 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
             }
             
             # 디버깅을 위한 랜드마크 출력
-            print("\n입술 랜드마크 좌표:")
+            print("\n코 랜드마크 좌표:")
             for key, value in landmarks_dict.items():
-                if 'lip' in key or 'mouth' in key:
+                if 'nose' in key:
                     print(f"{key}: {value}")
             
             return landmarks_dict
@@ -456,22 +458,59 @@ def analyze_eyes(landmarks: dict) -> Dict[str, Any]:
 
 def analyze_nose(landmarks: dict) -> Dict[str, Any]:
     """코의 특징을 분석합니다."""
-    nose_to_chin = calculate_distance(landmarks["point_nose"], landmarks["point_chin"])
-    face_height = calculate_distance(landmarks["point_forehead"], landmarks["point_chin"])
-    
-    nose_analysis = {
-        "nose_position_ratio": nose_to_chin / face_height,
-        "characteristics": []
-    }
-    
-    if nose_analysis["nose_position_ratio"] > 0.5:
-        nose_analysis["characteristics"].append("긴 코")
-    elif nose_analysis["nose_position_ratio"] < 0.4:
-        nose_analysis["characteristics"].append("짧은 코")
-    else:
-        nose_analysis["characteristics"].append("표준적인 코 길이")
-    print ("\nnose_analysis :" , nose_analysis)
-    return nose_analysis
+    try:
+        # 전체 코 길이 (콧대 시작점부터 코끝까지)
+        nose_length = calculate_distance(landmarks["point_nose_top"], landmarks["point_nose_tip"])
+        
+        # 코끝부터 윗입술까지의 거리
+        nose_to_lip = calculate_distance(landmarks["point_nose_tip"], landmarks["point_upper_lip"])
+        
+        # 얼굴 세로 길이
+        face_height = calculate_distance(landmarks["point_forehead"], landmarks["point_chin"])
+        
+        # 비율 계산
+        nose_ratio = nose_length / face_height if face_height != 0 else 0
+        
+        # 코 위치 분석
+        nose_position = "중간"
+        if nose_ratio > 0.4:
+            nose_position = "긴"
+        elif nose_ratio < 0.3:
+            nose_position = "짧은"
+            
+        nose_level = "적절"
+        if nose_ratio > 0.45:
+            nose_level = "매우 긴"
+        elif nose_ratio < 0.25:
+            nose_level = "매우 짧은"
+            
+        return {
+            "measurements": {
+                "length": format_float(nose_length),
+                "nose_to_lip": format_float(nose_to_lip),
+                "ratio": format_float(nose_ratio)
+            },
+            "nose_position": {
+                "position": nose_position,
+                "ratio": nose_ratio,
+                "level": nose_level
+            }
+        }
+        
+    except Exception as e:
+        print(f"코 분석 중 오류 발생: {str(e)}")
+        return {
+            "measurements": {
+                "length": 0.00,
+                "nose_to_lip": 0.00,
+                "ratio": 0.00
+            },
+            "nose_position": {
+                "position": "분석 불가",
+                "ratio": 0.00,
+                "level": "분석 불가"
+            }
+        }
 
 def analyze_facial_thirds(landmarks: dict) -> Dict[str, float]:
     """얼굴의 삼정비율을 분석합니다."""
@@ -988,11 +1027,10 @@ class FaceDetection:
                     # 눈
                     "point_left_eye": eyes_position["point_left_eye"],
                     "point_right_eye": eyes_position["point_right_eye"],
-                    # 코
-                    "point_nose": (
-                        int(landmarks.landmark[4].x * w),
-                        int(landmarks.landmark[4].y * h)
-                    ),
+                    # 코 랜드마크 수정
+                    "point_nose_top": (int(landmarks.landmark[168].x * w), int(landmarks.landmark[168].y * h)),    # 콧대 시작점
+                    "point_nose_tip": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),        # 코끝
+                    "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),           # 기존 코끝 포인트 유지
                     # 입
                     "point_mouth_left": (
                         int(landmarks.landmark[61].x * w),
@@ -1127,94 +1165,88 @@ def visualize_landmarks(image: np.ndarray, landmarks: dict, analysis_results: di
         'face': (255, 255, 0),     # 청록색
         'text': (255, 255, 255),   # 흰색
         'measure': (0, 255, 255),  # 노란색
-        'result': (147, 20, 255)   # 분홍색
+        'result': (0, 0, 255)      # 빨간색으로 통일
     }
     
     try:
-        # 기존 랜드마크 표시 코드...
+        # 기본 랜드마크 표시
+        for key, point in landmarks.items():
+            cv2.circle(vis_image, point, 2, COLORS[key], -1)
         
-        # 눈 위치 분석 결과 표시
+        # 분석 결과 표시 함수
+        def draw_position_info(position_key, position_data, center_point, y_offset=0, title=""):
+            mid_x = center_point[0]
+            mid_y = center_point[1] + y_offset
+            
+            position_text = f"{title}: {position_data['position']} ({position_data['ratio']:.2f})"
+            level_text = f"Level: {position_data['level']}"
+            
+            # 텍스트 크기 계산
+            (text_width, text_height), _ = cv2.getTextSize(position_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            
+            # 배경 사각형
+            padding = 10
+            rect_x1 = mid_x - text_width//2 - padding
+            rect_x2 = mid_x + text_width//2 + padding
+            rect_y1 = mid_y - 40
+            rect_y2 = mid_y + 10
+            
+            cv2.rectangle(vis_image, 
+                        (rect_x1, rect_y1),
+                        (rect_x2, rect_y2),
+                        (0, 0, 0), -1)
+            
+            # 텍스트 표시
+            cv2.putText(vis_image, position_text,
+                      (mid_x - text_width//2, mid_y - 20),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLORS['result'], 2)
+            cv2.putText(vis_image, level_text,
+                      (mid_x - text_width//2, mid_y),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLORS['result'], 2)
+        
+        # 눈 위치 표시
         if analysis_results and 'eyes_position' in analysis_results:
-            eye_pos = analysis_results['eyes_position']
             left_eye = landmarks['point_left_eye']
             right_eye = landmarks['point_right_eye']
-            mid_y = (left_eye[1] + right_eye[1]) // 2
-            mid_x = (left_eye[0] + right_eye[0]) // 2
+            eye_center = ((left_eye[0] + right_eye[0])//2, (left_eye[1] + right_eye[1])//2)
+            draw_position_info('eyes_position', 
+                             analysis_results['eyes_position'], 
+                             eye_center, 
+                             y_offset=-50,
+                             title="Eyes")
             
             # 눈 수평선
-            cv2.line(vis_image, (0, mid_y), (vis_image.shape[1], mid_y), COLORS['measure'], 1)
-            
-            # 눈 위치 텍스트
-            position_text = f"Eyes: {eye_pos['position']} ({eye_pos['ratio']:.2f})"
-            level_text = f"Level: {eye_pos['level']}"
-            
-            # 텍스트 배경
-            (text_width, text_height), _ = cv2.getTextSize(position_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(vis_image, 
-                        (mid_x - text_width//2 - 5, mid_y - 45),
-                        (mid_x + text_width//2 + 5, mid_y - 5),
-                        (0, 0, 0), -1)
-            
-            # 텍스트 표시
-            cv2.putText(vis_image, position_text,
-                      (mid_x - text_width//2, mid_y - 25),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
-            cv2.putText(vis_image, level_text,
-                      (mid_x - text_width//2, mid_y - 10),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
+            cv2.line(vis_image, (0, eye_center[1]), (vis_image.shape[1], eye_center[1]), 
+                    COLORS['result'], 1)
         
-        # 입술 위치 분석 결과 표시
+        # 코 위치 표시
+        if analysis_results and 'nose_position' in analysis_results:
+            nose_top = landmarks['point_nose_top']
+            nose_tip = landmarks['point_nose_tip']
+            nose_center = ((nose_top[0] + nose_tip[0])//2, (nose_top[1] + nose_tip[1])//2)
+            draw_position_info('nose_position', 
+                             analysis_results['nose_position'], 
+                             nose_center,
+                             y_offset=0,
+                             title="Nose")
+            
+            # 코 수직선
+            cv2.line(vis_image, nose_top, nose_tip, COLORS['result'], 2)
+        
+        # 입술 위치 표시
         if analysis_results and 'lips_position' in analysis_results:
-            lip_pos = analysis_results['lips_position']
             left_mouth = landmarks['point_mouth_left']
             right_mouth = landmarks['point_mouth_right']
-            mid_y = (left_mouth[1] + right_mouth[1]) // 2
-            mid_x = (left_mouth[0] + right_mouth[0]) // 2
+            mouth_center = ((left_mouth[0] + right_mouth[0])//2, (left_mouth[1] + right_mouth[1])//2)
+            draw_position_info('lips_position', 
+                             analysis_results['lips_position'], 
+                             mouth_center,
+                             y_offset=50,
+                             title="Lips")
             
             # 입술 수평선
-            cv2.line(vis_image, (0, mid_y), (vis_image.shape[1], mid_y), COLORS['measure'], 1)
-            
-            # 입술 위치 텍스트
-            position_text = f"Lips: {lip_pos['position']} ({lip_pos['ratio']:.2f})"
-            level_text = f"Level: {lip_pos['level']}"
-            
-            # 텍스트 배경
-            (text_width, text_height), _ = cv2.getTextSize(position_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(vis_image, 
-                        (mid_x - text_width//2 - 5, mid_y + 5),
-                        (mid_x + text_width//2 + 5, mid_y + 45),
-                        (0, 0, 0), -1)
-            
-            # 텍스트 표시
-            cv2.putText(vis_image, position_text,
-                      (mid_x - text_width//2, mid_y + 25),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
-            cv2.putText(vis_image, level_text,
-                      (mid_x - text_width//2, mid_y + 40),
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS['result'], 2)
-        
-        # 측정값 표시 (우측)
-        measurements_text = []
-        if 'point_mouth_left' in landmarks and 'point_mouth_right' in landmarks:
-            width = calculate_distance(landmarks['point_mouth_left'], landmarks['point_mouth_right'])
-            measurements_text.append(f"Lip Width: {width:.2f}")
-        
-        if 'point_upper_lip_top' in landmarks and 'point_lower_lip_bottom' in landmarks:
-            height = calculate_distance(landmarks['point_upper_lip_top'], landmarks['point_lower_lip_bottom'])
-            measurements_text.append(f"Lip Height: {height:.2f}")
-        
-        # 우측에 측정값 표시
-        start_y = 30
-        for i, text in enumerate(measurements_text):
-            y_pos = start_y + (i * 30)
-            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            cv2.rectangle(vis_image, 
-                        (vis_image.shape[1] - text_width - 20, y_pos - text_height - 5),
-                        (vis_image.shape[1] - 10, y_pos + 5),
-                        (0, 0, 0), -1)
-            cv2.putText(vis_image, text, 
-                      (vis_image.shape[1] - text_width - 15, y_pos), 
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLORS['text'], 2)
+            cv2.line(vis_image, (0, mouth_center[1]), (vis_image.shape[1], mouth_center[1]), 
+                    COLORS['result'], 1)
         
         return vis_image
         
