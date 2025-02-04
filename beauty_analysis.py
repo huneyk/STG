@@ -1,5 +1,9 @@
 # Standard library imports
 import json
+import os
+import sys
+import logging
+import warnings
 from textwrap import dedent
 from typing import Optional, Type, List, Dict, Any, Tuple
 
@@ -12,13 +16,11 @@ import numpy as np
 from PIL import Image
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import os
 import urllib.request
 import mediapipe as mp
 import shutil
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
-import logging
 import absl.logging
 
 app = FastAPI()
@@ -48,36 +50,6 @@ class ImageAnalysisResponse(BaseModel):
 class ImageUploadInput(BaseModel):
     """Image upload tool input."""
     file_path: Optional[str] = Field(description="Path to the image file", default=None)
-'''
-class ImageUpload:
-    """Image upload tool implementation."""
-    
-    def __init__(self, upload_dir: str = "uploads"):
-        self.upload_dir = upload_dir
-        os.makedirs(upload_dir, exist_ok=True)
-    
-    async def save_upload_file(self, upload_file: UploadFile) -> str:
-        """업로드된 파일을 저장하고 경로를 반환합니다."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_extension = os.path.splitext(upload_file.filename)[1]
-        
-        if file_extension.lower() not in ['.jpg', '.jpeg', '.png', '.bmp']:
-            raise ValueError("지원하지 않는 파일 형식입니다. (지원 형식: jpg, jpeg, png, bmp)")
-        
-        file_name = f"image_{timestamp}{file_extension}"
-        file_path = os.path.join(self.upload_dir, file_name)
-        
-        with open(file_path, "wb") as f:
-            content = await upload_file.read()
-            f.write(content)
-        
-        return file_path
-    
-    def cleanup(self, file_path: str) -> None:
-        """업로드된 파일을 삭제합니다."""
-        if os.path.exists(file_path):
-            os.remove(file_path)
-'''          
 
 class ImageUploadTool(BaseTool):
     name: str = "image_upload"
@@ -131,20 +103,7 @@ class FacialLandmarksInput(BaseModel):
     image_path: str = Field(description="Path to the image file to analyze")
     face_location: List[int] = Field(description="Location of detected face in image")
 
-class ColorAnalysisInput(BaseModel):
-    """Color analysis tool input."""
-    image_path: str = Field(description="Path to the image file")
-    face_landmarks: Dict[str, Any] = Field(description="Detected facial landmarks")
 
-class MakeupRecommendationInput(BaseModel):
-    """Makeup recommendation tool input."""
-    personal_color: Dict[str, Any] = Field(description="Personal color analysis results")
-    face_features: Dict[str, Any] = Field(description="Facial features information")
-
-class HairstyleRecommendationInput(BaseModel):
-    """Hairstyle recommendation tool input."""
-    face_shape: str = Field(description="Detected face shape")
-    personal_color: Dict[str, Any] = Field(description="Personal color analysis results")
 
 class ReportGeneratorInput(BaseModel):
     """Report generator tool input."""
@@ -319,250 +278,7 @@ class PersonalColorTool(BaseTool):
         }
         return season_palettes.get(season_analysis["season"])
 
-# Makeup Recommendation Tool
-class MakeupRecommendationInput(BaseModel):
-    """Makeup recommendation tool input."""
-    personal_color: dict = Field(description="Personal color analysis results")
-    face_features: dict = Field(description="Facial features information")
 
-class MakeupRecommendationTool(BaseTool):
-    name: str = "makeup_style_recommendation"
-    description: str = "Recommend makeup styles based on personal color and facial features"
-    args_schema: Type[BaseModel] = MakeupRecommendationInput
-
-    def _run(self, personal_color: dict, face_features: dict):
-        try:
-            # 메이크업 스타일 추천 생성
-            base_makeup = self._recommend_base_makeup(personal_color)
-            eye_makeup = self._recommend_eye_makeup(personal_color, face_features)
-            lip_makeup = self._recommend_lip_makeup(personal_color)
-            
-            return {
-                "base_makeup": base_makeup,
-                "eye_makeup": eye_makeup,
-                "lip_makeup": lip_makeup,
-                "application_tips": self._generate_application_tips(face_features),
-                "product_recommendations": self._recommend_products(personal_color)
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    def _recommend_base_makeup(self, personal_color):
-        # 베이스 메이크업 추천 로직
-        return {
-            "foundation": {
-                "tone": "21N",
-                "type": "Matte",
-                "coverage": "Medium"
-            },
-            "concealer": {
-                "tone": "Light",
-                "type": "Creamy",
-                "coverage": "High"
-            },
-            "powder": {
-                "type": "Translucent",
-                "finish": "Natural"
-            }
-        }
-
-    def _recommend_eye_makeup(self, personal_color, face_features):
-        return {
-            "eyeshadow": {
-                "main_colors": ["Champagne", "Brown", "Black"],
-                "technique": "Gradient",
-                "finish": "Shimmer"
-            },
-            "eyeliner": {
-                "color": "Black",
-                "style": "Wing"
-            },
-            "mascara": {
-                "color": "Black",
-                "type": "Volumizing"
-            }
-        }
-
-    def _recommend_lip_makeup(self, personal_color):
-        return {
-            "lipstick": {
-                "color": "MLBB",
-                "finish": "Semi-matte",
-                "application": "Gradation"
-            }
-        }
-
-# Hairstyle Recommendation Tool
-class HairstyleRecommendationInput(BaseModel):
-    """Hairstyle recommendation tool input."""
-    face_shape: str = Field(description="Detected face shape")
-    personal_color: dict = Field(description="Personal color analysis results")
-
-class HairstyleRecommendationTool(BaseTool):
-    name: str = "hairstyle_recommendation"
-    description: str = "Recommend hairstyles based on face shape and personal color"
-    args_schema: Type[BaseModel] = HairstyleRecommendationInput
-
-    def _run(self, face_shape: str, personal_color: dict):
-        try:
-            # 헤어스타일 추천 생성
-            recommended_styles = self._get_hairstyle_recommendations(face_shape)
-            color_recommendations = self._get_color_recommendations(personal_color)
-            
-            return {
-                "recommended_styles": recommended_styles,
-                "color_recommendations": color_recommendations,
-                "styling_tips": self._generate_styling_tips(face_shape),
-                "maintenance_guide": self._generate_maintenance_guide()
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    def _get_hairstyle_recommendations(self, face_shape):
-        # 얼굴형별 추천 스타일
-        face_shape_styles = {
-            "oval": [
-                {
-                    "name": "Long Layered Cut",
-                    "description": "Soft layers framing the face",
-                    "length": "Long",
-                    "styling_tips": ["Use volumizing products", "Blow dry with round brush"]
-                },
-                {
-                    "name": "Medium Length Bob",
-                    "description": "Classic bob with subtle layers",
-                    "length": "Medium",
-                    "styling_tips": ["Use smoothing serum", "Straighten with flat iron"]
-                }
-            ],
-            # 다른 얼굴형에 대한 스타일도 정의
-        }
-        return face_shape_styles.get(face_shape.lower(), [])
-
-    def _get_color_recommendations(self, personal_color):
-        return {
-            "base_color": "Dark Brown",
-            "highlights": "Caramel",
-            "lowlights": "Chocolate Brown",
-            "maintenance_level": "Medium",
-            "frequency": "Every 6-8 weeks"
-        }
-
-# Report Generator Tool
-class ReportGeneratorInput(BaseModel):
-    """Report generator tool input."""
-    analysis_results: dict = Field(description="All analysis results to include in report")
-
-class ReportGeneratorTool(BaseTool):
-    name: str = "report_template_generation"
-    description: str = "Generate comprehensive beauty analysis report"
-    args_schema: Type[BaseModel] = ReportGeneratorInput
-
-    def _run(self, analysis_results: dict):
-        try:
-            report = {
-                "summary": self._generate_summary(analysis_results),
-                "personal_analysis": {
-                    "face_shape": analysis_results.get("face_shape"),
-                    "skin_tone": analysis_results.get("skin_tone"),
-                    "personal_color": analysis_results.get("personal_color")
-                },
-                "recommendations": {
-                    "makeup": analysis_results.get("makeup_recommendations"),
-                    "hairstyle": analysis_results.get("hairstyle_recommendations")
-                },
-                "application_guides": {
-                    "makeup_steps": self._generate_makeup_steps(analysis_results),
-                    "styling_tips": self._generate_styling_tips(analysis_results)
-                },
-                "product_recommendations": self._generate_product_list(analysis_results),
-                "maintenance_schedule": self._generate_maintenance_schedule(analysis_results)
-            }
-            print ("\nreport :" , report)
-            return report
-        except Exception as e:
-            return {"error": str(e)}
-
-    def _generate_summary(self, analysis_results):
-        print ("\nanalysis_results :" , analysis_results)
-        return {
-            "key_points": [
-                "퍼스널 컬러는 가을 웜톤입니다.",
-                "둥근 얼굴형에 맞는 헤어스타일을 추천드립니다.",
-                "자연스러운 눈매를 강조하는 메이크업을 제안합니다."
-            ],
-            "overall_concept": "내추럴하면서도 세련된 이미지",
-            "focus_points": ["눈매 강조", "광대 쉐이딩", "입체감 있는 헤어스타일"]
-        }
-
-    def _generate_maintenance_schedule(self, analysis_results):
-        print ("\nanalysis_results :" , analysis_results)
-        return {
-            "daily": [
-                "기초 스킨케어",
-                "메이크업 클렌징"
-            ],
-            "weekly": [
-                "딥 클렌징",
-                "헤어 트리트먼트"
-            ],
-            "monthly": [
-                "헤어 컷",
-                "염색 리터치"
-            ]
-        }
-    
-    def analyze_image(self, image_path):
-        """
-        Analyze uploaded image and generate comprehensive beauty analysis
-        """
-        try:
-            # Initialize analysis results
-            analysis_results = {}
-            
-            # Face detection
-            face_detector = FaceDetectionInput(image_path=image_path)
-            face_location = self._run(face_detector)
-            
-            # Facial landmarks detection 
-            landmarks_detector = FacialLandmarksTool()
-            facial_landmarks = landmarks_detector._run(
-                image_path=image_path,
-                face_location=face_location
-            )
-            
-            # Extract face shape and features
-            analysis_results["face_shape"] = facial_landmarks["face_shape"]
-            analysis_results["facial_features"] = facial_landmarks["features"]
-            
-            # Color analysis
-            color_analyzer = ColorAnalysisInput(
-                image_path=image_path
-            )
-            color_analysis = self._run(color_analyzer)
-            
-            # Determine season and generate color palette
-            skin_tone = color_analysis.get("skin_tone", "neutral")
-            season_analysis = self._determine_season(skin_tone)
-            color_palette = self._generate_color_palette(season_analysis)
-            
-            analysis_results["skin_tone"] = skin_tone
-            analysis_results["personal_color"] = {
-                "season": season_analysis,
-                "palette": color_palette
-            }
-            
-            # Generate recommendations
-            makeup_rec = MakeupRecommendationTool()
-            analysis_results["makeup_recommendations"] = makeup_rec._run(
-                personal_color=analysis_results["personal_color"],
-                face_features=analysis_results["facial_features"]
-            )
-            print ("\nanalysis_results :" , analysis_results)
-            return analysis_results
-            
-        except Exception as e:
-            return {"error": f"Image analysis failed: {str(e)}"}
     
 def process_image(image_path: str) -> Tuple[np.ndarray, mp.solutions.face_mesh.FaceMesh]:
     """MediaPipe를 사용하여 이미지를 처리합니다."""
@@ -603,11 +319,9 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
             refine_landmarks=True,
             min_detection_confidence=0.5
         ) as face_mesh:
-            # BGR을 RGB로 변환
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             h, w = image.shape[:2]
             
-            # MediaPipe로 얼굴 랜드마크 검출
             results = face_mesh.process(image_rgb)
             
             if not results.multi_face_landmarks:
@@ -621,27 +335,32 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
                 "point_left_eye": (int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)),
                 "point_right_eye": (int(landmarks.landmark[263].x * w), int(landmarks.landmark[263].y * h)),
                 
-                # 눈썹
-                "point_left_eyebrow": (int(landmarks.landmark[282].x * w), int(landmarks.landmark[282].y * h)),
-                "point_right_eyebrow": (int(landmarks.landmark[52].x * w), int(landmarks.landmark[52].y * h)),
-                
                 # 코
                 "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),
                 
-                # 입
-                "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),
-                "point_mouth_right": (int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)),
+                # 입술 (MediaPipe Face Mesh의 입술 랜드마크 수정)
+                "point_mouth_left": (int(landmarks.landmark[57].x * w), int(landmarks.landmark[57].y * h)),      # 입술 좌측
+                "point_mouth_right": (int(landmarks.landmark[287].x * w), int(landmarks.landmark[287].y * h)),   # 입술 우측
+                "point_upper_lip": (int(landmarks.landmark[37].x * w), int(landmarks.landmark[37].y * h)),       # 윗입술 상단 중앙
+                "point_lower_lip": (int(landmarks.landmark[84].x * w), int(landmarks.landmark[84].y * h)),       # 아랫입술 하단 중앙
                 
                 # 얼굴 윤곽
-                "point_forehead": (int(landmarks.landmark[10].x * w), int(landmarks.landmark[10].y * h)),
                 "point_chin": (int(landmarks.landmark[152].x * w), int(landmarks.landmark[152].y * h)),
-                "point_jaw_left": (int(landmarks.landmark[132].x * w), int(landmarks.landmark[132].y * h)),
-                "point_jaw_right": (int(landmarks.landmark[361].x * w), int(landmarks.landmark[361].y * h)),
+                "point_forehead": (int(landmarks.landmark[10].x * w), int(landmarks.landmark[10].y * h)),
+                "point_temple_left": (int(landmarks.landmark[139].x * w), int(landmarks.landmark[139].y * h)),
+                "point_temple_right": (int(landmarks.landmark[368].x * w), int(landmarks.landmark[368].y * h)),
                 "point_cheek_left": (int(landmarks.landmark[123].x * w), int(landmarks.landmark[123].y * h)),
                 "point_cheek_right": (int(landmarks.landmark[352].x * w), int(landmarks.landmark[352].y * h)),
-                "point_temple_left": (int(landmarks.landmark[139].x * w), int(landmarks.landmark[139].y * h)),
-                "point_temple_right": (int(landmarks.landmark[368].x * w), int(landmarks.landmark[368].y * h))
+                "point_jaw_left": (int(landmarks.landmark[132].x * w), int(landmarks.landmark[132].y * h)),
+                "point_jaw_right": (int(landmarks.landmark[361].x * w), int(landmarks.landmark[361].y * h))
             }
+            
+            # 디버깅을 위한 랜드마크 출력
+            print("\n입술 랜드마크 좌표:")
+            print(f"좌측: {landmarks_dict['point_mouth_left']}")
+            print(f"우측: {landmarks_dict['point_mouth_right']}")
+            print(f"상단: {landmarks_dict['point_upper_lip']}")
+            print(f"하단: {landmarks_dict['point_lower_lip']}")
             
             return landmarks_dict
             
@@ -649,9 +368,12 @@ def detect_face_landmarks(image: np.ndarray) -> dict:
         raise ValueError(f"랜드마크 검출 중 오류 발생: {str(e)}")
 
 def analyze_beauty_features(landmarks: dict, image: np.ndarray) -> Dict[str, Any]:
-    """더 상세한 얼굴 분석을 수행합니다."""
+    """통합된 얼굴 분석을 수행합니다."""
+    # 입술 분석
+    lips_analysis = analyze_lips(landmarks)
+    landmarks = lips_analysis["landmarks"]
     
-    face_analysis = {
+    return {
         "face_shape": {
             "main_shape": determine_face_shape(landmarks),
             "details": analyze_face_shape_details(landmarks)
@@ -659,10 +381,9 @@ def analyze_beauty_features(landmarks: dict, image: np.ndarray) -> Dict[str, Any
         "facial_features": {
             "eyes": analyze_eyes(landmarks),
             "nose": analyze_nose(landmarks),
-            "lips": analyze_lips(landmarks),
+            "lips": lips_analysis,
             "jaw": analyze_jaw(landmarks),
-            "forehead": analyze_forehead(landmarks),
-            "cheeks": analyze_cheeks(landmarks)
+            "forehead": analyze_forehead(landmarks)
         },
         "proportions": {
             "facial_thirds": analyze_facial_thirds(landmarks),
@@ -674,7 +395,6 @@ def analyze_beauty_features(landmarks: dict, image: np.ndarray) -> Dict[str, Any
             "features": analyze_feature_symmetry(landmarks)
         }
     }
-    return face_analysis
 
 def analyze_face_shape_details(landmarks: dict) -> Dict[str, Any]:
     """얼굴형의 세부 특징을 분석합니다."""
@@ -830,16 +550,19 @@ def analyze_feature_symmetry(landmarks: dict) -> Dict[str, float]:
 
 def calculate_overall_symmetry(landmarks: dict) -> float:
     """얼굴의 대칭성을 계산합니다."""
-    left_eye = np.array(landmarks["point_left_eye"])
-    right_eye = np.array(landmarks["point_right_eye"])
-    nose = np.array(landmarks["point_nose_bottom"])
-    
-    left_dist = np.linalg.norm(left_eye - nose)
-    right_dist = np.linalg.norm(right_eye - nose)
-    
-    symmetry = 1 - abs(left_dist - right_dist) / max(left_dist, right_dist)
-    print ("\nsymmetry :" , symmetry)
-    return float(symmetry)
+    try:
+        left_eye = np.array(landmarks["point_left_eye"])
+        right_eye = np.array(landmarks["point_right_eye"])
+        nose = np.array(landmarks["point_nose"])  # point_nose_bottom 대신 point_nose 사용
+        
+        left_dist = np.linalg.norm(left_eye - nose)
+        right_dist = np.linalg.norm(right_eye - nose)
+        
+        symmetry = 1 - abs(left_dist - right_dist) / max(left_dist, right_dist)
+        return float(symmetry)
+    except Exception as e:
+        print(f"대칭성 계산 중 오류 발생: {str(e)}")
+        return 0.0
 
 def calculate_face_ratio(landmarks: dict) -> float:
     """얼굴의 가로 세로 비율을 계산합니다."""
@@ -859,20 +582,19 @@ def determine_face_shape(landmarks: dict) -> str:
     # 얼굴 너비 계산
     face_width = np.linalg.norm(
         np.array(landmarks["point_cheek_left"]) - 
-        np.array(landmarks["point_cheek_right"])
-    )
+        np.array(landmarks["point_cheek_right"]))
+        
     face_height = np.linalg.norm(
         np.array(landmarks["point_forehead"]) - 
-        np.array(landmarks["point_chin"])
-    )
+        np.array(landmarks["point_chin"]))
+        
     jaw_width = np.linalg.norm(
         np.array(landmarks["point_jaw_left"]) - 
-        np.array(landmarks["point_jaw_right"])
-    )
+        np.array(landmarks["point_jaw_right"]))
+        
     forehead_width = np.linalg.norm(
         np.array(landmarks["point_temple_left"]) - 
-        np.array(landmarks["point_temple_right"])
-    )
+        np.array(landmarks["point_temple_right"]))
     
     # 비율에 따른 얼굴형 판단
     ratio = face_width / face_height
@@ -881,24 +603,24 @@ def determine_face_shape(landmarks: dict) -> str:
     
     if ratio > 0.9:
         if jaw_ratio < 0.8:
-            print ("\n하트형")
+            print("\n하트형")
             return "하트형"
         else:
             return "둥근형"
     else:
         if jaw_ratio < 0.75:
             if forehead_ratio > 0.9:
-                print ("\n역삼각형")
+                print("\n역삼각형")
                 return "역삼각형"
             else:
-                print ("\n계란형")
+                print("\n계란형")
                 return "계란형"
         else:
             if forehead_ratio > 0.9:
-                print ("\n사각형")
+                print("\n사각형")
                 return "사각형"
             else:
-                print ("\n긴 얼굴형")
+                print("\n긴 얼굴형")
                 return "긴 얼굴형"
 
 def analyze_jaw_line(landmarks: dict) -> str:
@@ -941,49 +663,115 @@ def analyze_forehead(landmarks: dict) -> str:
         print ("\n균형잡힌 이마")
         return "균형잡힌 이마"
 
+def format_float(value: float) -> float:
+    """소수점 2자리로 포맷팅합니다."""
+    return float(format(value, '.2f'))
+
 def analyze_lips(landmarks: dict) -> Dict[str, Any]:
     """입술의 특징을 분석합니다."""
     try:
-        # 입술 너비 계산
-        lip_width = calculate_distance(landmarks["point_mouth_left"], landmarks["point_mouth_right"])
-        face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
+        # 기본 측정값 계산
+        face_width = calculate_distance(
+            landmarks["point_cheek_left"], 
+            landmarks["point_cheek_right"]
+        )
+        face_height = calculate_distance(
+            landmarks["point_forehead"], 
+            landmarks["point_chin"]
+        )
         
-        # 입술 비율 계산
-        lip_ratio = lip_width / face_width
+        # 입술 측정 시도
+        try:
+            lip_width = calculate_distance(
+                landmarks["point_mouth_left"], 
+                landmarks["point_mouth_right"]
+            )
+        except:
+            print("입술 너비 측정 실패")
+            lip_width = 0
+            
+        try:
+            lip_height = calculate_distance(
+                landmarks["point_upper_lip"], 
+                landmarks["point_lower_lip"]
+            )
+        except:
+            print("입술 높이 측정 실패")
+            lip_height = 0
         
-        # 입술 높이 계산 (코끝에서 입술까지의 거리)
-        lip_height = calculate_distance(landmarks["point_nose"], landmarks["point_mouth_left"])
-        face_height = calculate_distance(landmarks["point_forehead"], landmarks["point_chin"])
-        height_ratio = lip_height / face_height
+        # 비율 계산 (0으로 나누기 방지)
+        width_ratio = lip_width / face_width if face_width != 0 else 0
+        height_ratio = lip_height / face_height if face_height != 0 else 0
         
-        # 입술 특징 분석
+        # 대칭성 분석 시도
+        try:
+            left_half = calculate_distance(
+                landmarks["point_mouth_left"], 
+                landmarks["point_upper_lip"]
+            )
+            right_half = calculate_distance(
+                landmarks["point_mouth_right"], 
+                landmarks["point_upper_lip"]
+            )
+            symmetry = 1 - abs(left_half - right_half) / max(left_half, right_half) if max(left_half, right_half) != 0 else 0
+        except:
+            print("입술 대칭성 측정 실패")
+            symmetry = 0
+        
+        # 특징 분석
         characteristics = []
-        if lip_ratio > 0.45:
-            characteristics.append("넓은 입술")
-        elif lip_ratio < 0.35:
-            characteristics.append("좁은 입술")
-        else:
-            characteristics.append("균형잡힌 입술")
-            
-        if height_ratio > 0.2:
-            characteristics.append("두꺼운 입술")
-        elif height_ratio < 0.15:
-            characteristics.append("얇은 입술")
-        else:
-            characteristics.append("적당한 두께의 입술")
-            
+        
+        # 유효한 측정값이 있을 경우만 특징 분석
+        if lip_width > 0 and face_width > 0:
+            if width_ratio > 0.45:
+                characteristics.append("넓은 입술")
+            elif width_ratio < 0.35:
+                characteristics.append("좁은 입술")
+            else:
+                characteristics.append("균형잡힌 입술 너비")
+        
+        if lip_height > 0 and face_height > 0:
+            if height_ratio > 0.08:
+                characteristics.append("두꺼운 입술")
+            elif height_ratio < 0.05:
+                characteristics.append("얇은 입술")
+            else:
+                characteristics.append("적당한 두께의 입술")
+        
+        if symmetry > 0:
+            if symmetry > 0.95:
+                characteristics.append("대칭적인 입술")
+            elif symmetry < 0.85:
+                characteristics.append("비대칭적인 입술")
+        
+        # 특징이 하나도 없으면 분석 불가 표시
+        if not characteristics:
+            characteristics = ["분석 불가"]
+        
         return {
-            "lip_width_ratio": float(lip_ratio),
-            "lip_height_ratio": float(height_ratio),
-            "characteristics": characteristics
+            "measurements": {
+                "width": format_float(lip_width),
+                "height": format_float(lip_height),
+                "width_ratio": format_float(width_ratio),
+                "height_ratio": format_float(height_ratio),
+                "symmetry": format_float(symmetry)
+            },
+            "characteristics": characteristics,
+            "landmarks": landmarks
         }
         
     except Exception as e:
         print(f"입술 분석 중 오류 발생: {str(e)}")
         return {
-            "lip_width_ratio": 0.0,
-            "lip_height_ratio": 0.0,
-            "characteristics": ["분석 불가"]
+            "measurements": {
+                "width": 0.00,
+                "height": 0.00,
+                "width_ratio": 0.00,
+                "height_ratio": 0.00,
+                "symmetry": 0.00
+            },
+            "characteristics": ["분석 불가"],
+            "landmarks": landmarks
         }
 
 def analyze_jaw(landmarks: dict) -> Dict[str, Any]:
@@ -996,36 +784,58 @@ def analyze_forehead(landmarks: dict) -> Dict[str, Any]:
     face_width = calculate_distance(landmarks["point_cheek_left"], landmarks["point_cheek_right"])
     return {"forehead_ratio": forehead_width / face_width}
 
-
-def analyze_face_proportions(landmarks: dict) -> Dict[str, float]:
-    """얼굴 비율을 분석합니다."""
-    # 삼정비율 계산 (이마:코:턱)
-    forehead_height = np.linalg.norm(
-        np.array(landmarks["point_forehead"]) - 
-        np.array(landmarks["point_left_eyebrow"])
-    )
-    
-    midface_height = np.linalg.norm(
-        np.array(landmarks["point_left_eyebrow"]) - 
-        np.array(landmarks["point_nose_bottom"])
-    )
-    
-    lower_height = np.linalg.norm(
-        np.array(landmarks["point_nose_bottom"]) - 
-        np.array(landmarks["point_chin"])
-    )
-    
-    
-    total_height = forehead_height + midface_height + lower_height
-    print ("\ntotal_height :" , total_height)
-    print ("\nforehead_ratio :" , forehead_height / total_height)
-    print ("\nmidface_ratio :" , midface_height / total_height)
-    print ("\nlower_ratio :" , lower_height / total_height)
-    return {
-        "forehead_ratio": forehead_height / total_height,
-        "midface_ratio": midface_height / total_height,
-        "lower_ratio": lower_height / total_height
-    }
+def analyze_facial_fifths(landmarks: dict) -> Dict[str, Any]:
+    """얼굴의 오정비율을 분석합니다."""
+    try:
+        face_width = calculate_distance(landmarks["point_temple_left"], landmarks["point_temple_right"])
+        fifth_width = face_width / 5
+        
+        outer_eye_left = calculate_distance(landmarks["point_temple_left"], landmarks["point_left_eye"])
+        outer_eye_right = calculate_distance(landmarks["point_right_eye"], landmarks["point_temple_right"])
+        eye_width_left = calculate_distance(landmarks["point_left_eye"], landmarks["point_nose"])
+        eye_width_right = calculate_distance(landmarks["point_nose"], landmarks["point_right_eye"])
+        intercanthal = calculate_distance(landmarks["point_left_eye"], landmarks["point_right_eye"])
+        
+        ratios = {
+            "outer_eye_left_ratio": format_float(outer_eye_left / fifth_width),
+            "eye_width_left_ratio": format_float(eye_width_left / fifth_width),
+            "intercanthal_ratio": format_float(intercanthal / fifth_width),
+            "eye_width_right_ratio": format_float(eye_width_right / fifth_width),
+            "outer_eye_right_ratio": format_float(outer_eye_right / fifth_width)
+        }
+        
+        deviations = {
+            key: format_float(abs(ratio - 1.0)) for key, ratio in ratios.items()
+        }
+        
+        evaluation = []
+        if max(deviations.values()) < 0.15:
+            evaluation.append("이상적인 오정비율")
+        else:
+            if deviations["intercanthal_ratio"] > 0.15:
+                if ratios["intercanthal_ratio"] > 1:
+                    evaluation.append("눈 사이 간격이 넓은 편")
+                else:
+                    evaluation.append("눈 사이 간격이 좁은 편")
+            
+            if deviations["outer_eye_left_ratio"] > 0.15 or deviations["outer_eye_right_ratio"] > 0.15:
+                evaluation.append("측면부 비율이 불균형")
+        
+        return {
+            "ratios": ratios,
+            "deviations": deviations,
+            "evaluation": evaluation,
+            "ideal_fifth_width": format_float(fifth_width)
+        }
+        
+    except Exception as e:
+        print(f"오정비율 분석 중 오류 발생: {str(e)}")
+        return {
+            "ratios": {},
+            "deviations": {},
+            "evaluation": ["분석 불가"],
+            "ideal_fifth_width": 0.0
+        }
 
 def calculate_angle(p1, p2, p3) -> float:
     """세 점 사이의 각도를 계산합니다."""
@@ -1060,7 +870,46 @@ def save_results(results: Dict[str, Any], output_path: str) -> None:
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=4, ensure_ascii=False)
 
+class FaceAnalyzer:
+    """얼굴 분석을 위한 메인 클래스"""
+    def __init__(self):
+        self.face_detector = FaceDetection()
+        
+    def analyze_face(self, image_path: str) -> Dict[str, Any]:
+        """전체 얼굴 분석 프로세스를 실행합니다."""
+        try:
+            # 이미지 로드
+            image = cv2.imread(image_path)
+            if image is None:
+                raise ValueError(f"이미지를 불러올 수 없습니다: {image_path}")
+            
+            # 얼굴 검출
+            detection_result = self.face_detector.detect_faces(image)
+            
+            # 특징 분석
+            analysis_result = analyze_beauty_features(detection_result["landmarks"], image)
+            
+            # 결과 시각화
+            output_dir = "output"
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f"analyzed_{os.path.basename(image_path)}")
+            self.face_detector.visualize_detection(image, detection_result, output_path)
+            
+            # 결과 저장
+            results = {
+                "face_detection": detection_result,
+                "analysis": analysis_result,
+                "output_image": output_path
+            }
+            save_results(results, os.path.join(output_dir, "analysis_results.json"))
+            
+            return results
+            
+        except Exception as e:
+            raise ValueError(f"얼굴 분석 중 오류 발생: {str(e)}")
+
 class FaceDetection:
+    """MediaPipe를 사용한 얼굴 검출 클래스"""
     def __init__(self):
         self.mp_face_mesh = mp.solutions.face_mesh
         self.mp_drawing = mp.solutions.drawing_utils
@@ -1193,8 +1042,8 @@ class FaceDetection:
                     landmarks.landmark[1],    # 코
                     landmarks.landmark[33],   # 왼쪽 눈
                     landmarks.landmark[263],  # 오른쪽 눈
-                    landmarks.landmark[61],   # 입 왼쪽
-                    landmarks.landmark[291],  # 입 오른쪽
+                    landmarks.landmark[61],   # 입 좌측
+                    landmarks.landmark[291],  # 입 우측
                     landmarks.landmark[152],  # 턱
                     landmarks.landmark[10]    # 이마
                 ]
@@ -1248,34 +1097,22 @@ class FaceDetection:
         except Exception as e:
             raise ValueError(f"시각화 중 오류 발생: {str(e)}")
 
-# 전역 인스턴스 생성
-face_detector = FaceDetection()
-
-@app.post("/analyze", response_model=ImageAnalysisResponse)
+@app.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
-    """이미지를 업로드받아 얼굴 분석을 수행합니다."""
+    """API 엔드포인트: 이미지 분석"""
     try:
-        # 얼굴 검출
-        face_detection_result = await face_detector.detect_faces(file)
+        # 임시 파일로 저장
+        temp_path = f"temp_{file.filename}"
+        with open(temp_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
         
-        # 특징 분석 수행
-        landmarks = face_detection_result["landmarks"]
+        # 분석 실행
+        analyzer = FaceAnalyzer()
+        result = analyzer.analyze_face(temp_path)
         
-        # 파일 다시 읽기 (분석용)
-        contents = await file.seek(0)
-        contents = await file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        analysis_result = analyze_beauty_features(landmarks, image)
-        
-        # 전체 결과 구성
-        result = {
-            "face_detection": face_detection_result,
-            "face_characteristics": analysis_result["face_characteristics"],
-            "measurements": analysis_result["measurements"],
-            "skin_analysis": analysis_result["skin_analysis"]
-        }
+        # 임시 파일 삭제
+        os.remove(temp_path)
         
         return result
         
@@ -1283,50 +1120,28 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
 def main():
+    """프로그램 메인 실행 함수"""
     try:
-        # 출력 디렉토리 설정
-        output_dir = "output"
-        os.makedirs(output_dir, exist_ok=True)
-        
         print("얼굴 분석 프로그램을 시작합니다...")
         
-        # 이미지 파일 브라우저로 선택
-        print("이미지 파일을 선택해주세요...")
+        # 이미지 선택
         image_path = browse_image()
         print(f"선택된 이미지: {image_path}")
         
-        # 얼굴 검출기 인스턴스 생성
-        detector = FaceDetection()
+        # 분석 실행
+        analyzer = FaceAnalyzer()
+        result = analyzer.analyze_face(image_path)
         
-        # 이미지 로드
-        image = cv2.imread(image_path)
-        if image is None:
-            raise ValueError(f"이미지를 불러올 수 없습니다: {image_path}")
-        
-        # 얼굴 검출 수행
-        result = detector.detect_faces(image)
-        print("검출 결과:", result)
-        
-        # 결과 저장 경로 생성
-        output_path = os.path.join(output_dir, f"detected_{os.path.basename(image_path)}")
-        
-        # 결과 시각화
-        detector.visualize_detection(image, result, output_path)
-        print(f"결과 이미지가 저장되었습니다: {output_path}")
-        
-        # 결과를 메시지 박스로 표시
-        root = tk.Tk()
-        root.withdraw()
+        # 결과 표시
         tk.messagebox.showinfo("분석 완료", 
-            f"얼굴 분석이 완료되었습니다.\n\n"
-            f"검출된 얼굴 신뢰도: {result['confidence']:.2f}\n"
-            f"결과 이미지가 저장된 경로:\n{output_path}"
+            f"얼굴 분석이 완료되었습니다.\n"
+            f"검출된 얼굴 신뢰도: {result['face_detection']['confidence']:.2f}\n"
+            f"결과 이미지: {result['output_image']}"
         )
         
     except Exception as e:
         print(f"오류 발생: {str(e)}")
-        if 'root' in locals():
-            tk.messagebox.showerror("오류", f"분석 중 오류가 발생했습니다:\n{str(e)}")
+        tk.messagebox.showerror("오류", f"분석 중 오류가 발생했습니다:\n{str(e)}")
 
 if __name__ == "__main__":
     main()
