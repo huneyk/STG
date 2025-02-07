@@ -167,6 +167,180 @@ class FacialLandmarksTool(BaseTool):
         return "oval"  # 예시 반환값
 '''
 
+<<<<<<< HEAD
+=======
+# Personal Color Tool
+class ColorAnalysisInput(BaseModel):
+    """Color analysis tool input."""
+    image_path: str = Field(description="Path to the image file")
+    face_landmarks: dict = Field(description="Detected facial landmarks")
+
+class PersonalColorTool(BaseTool):
+    name: str = "personal_color_analysis"
+    description: str = "Analyze and determine personal color season"
+    args_schema: Type[BaseModel] = ColorAnalysisInput
+
+    def _run(self, image_path: str, face_landmarks: dict):
+        try:
+            image = cv2.imread(image_path)
+            
+            # 피부톤 분석
+            skin_tone = self._analyze_skin_tone(image, face_landmarks)
+            
+            # 퍼스널 컬러 시즌 판단
+            season_analysis = self._determine_season(skin_tone)
+            
+            # 컬러 팔레트 생성
+            color_palette = self._generate_color_palette(season_analysis)
+            
+            return {
+                "season": season_analysis["season"],
+                "characteristics": season_analysis["characteristics"],
+                "skin_tone": skin_tone,
+                "color_palette": color_palette,
+                "seasonal_keywords": season_analysis["keywords"]
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _analyze_skin_tone(self, image, landmarks):
+        # 실제 구현에서는 피부톤 영역 추출 및 분석
+        return {
+            "base": "warm",
+            "undertone": "yellow",
+            "brightness": "medium",
+            "contrast": "high"
+        }
+
+    def _determine_season(self, skin_tone):
+        # 실제 구현에서는 피부톤 기반 시즌 판단
+        return {
+            "season": "Autumn",
+            "characteristics": ["Warm", "Muted", "Deep"],
+            "keywords": ["Earth", "Rich", "Warm"]
+        }
+
+    def _generate_color_palette(self, season_analysis):
+        # 시즌별 컬러 팔레트 정의
+        season_palettes = {
+            "Spring": {
+                "base": ["#FFE4C4", "#F5DEB3"],
+                "main": ["#FF6B6B", "#4ECDC4"],
+                "accent": ["#FFD93D", "#95E1D3"]
+            },
+            "Summer": {
+                "base": ["#F0F4F7", "#E8EDF2"],
+                "main": ["#779ECB", "#C3AED6"],
+                "accent": ["#FFB6B9", "#8AC6D1"]
+            },
+            "Autumn": {
+                "base": ["#DAA520", "#CD853F"],
+                "main": ["#8B4513", "#A0522D"],
+                "accent": ["#D2691E", "#B8860B"]
+            },
+            "Winter": {
+                "base": ["#F0F8FF", "#FFFFFF"],
+                "main": ["#000080", "#4B0082"],
+                "accent": ["#DC143C", "#800080"]
+            }
+        }
+        return season_palettes.get(season_analysis["season"])
+
+
+    
+def process_image(image_path: str) -> Tuple[np.ndarray, mp.solutions.face_mesh.FaceMesh]:
+    """MediaPipe를 사용하여 이미지를 처리합니다."""
+    try:
+        # MediaPipe Face Mesh 초기화
+        mp_face_mesh = mp.solutions.face_mesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        )
+
+        # 이미지 로드
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"이미지를 불러올 수 없습니다: {image_path}")
+
+        # BGR을 RGB로 변환 및 처리
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(image_rgb)
+
+        if not results.multi_face_landmarks:
+            raise ValueError("얼굴을 찾을 수 없습니다.")
+
+        return image, results.multi_face_landmarks[0]
+
+    except Exception as e:
+        raise ValueError(f"이미지 처리 중 오류 발생: {str(e)}")
+
+def detect_face_landmarks(image: np.ndarray) -> dict:
+    """MediaPipe를 사용하여 얼굴 특징점을 검출합니다."""
+    try:
+        mp_face_mesh = mp.solutions.face_mesh
+        with mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5
+        ) as face_mesh:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            h, w = image.shape[:2]
+            
+            results = face_mesh.process(image_rgb)
+            
+            if not results.multi_face_landmarks:
+                raise ValueError("얼굴을 찾을 수 없습니다.")
+            
+            landmarks = results.multi_face_landmarks[0]
+            
+            landmarks_dict = {
+                # 눈
+                "point_left_eye": (int(landmarks.landmark[33].x * w), int(landmarks.landmark[33].y * h)),
+                "point_right_eye": (int(landmarks.landmark[263].x * w), int(landmarks.landmark[263].y * h)),
+                
+                # 코 랜드마크 수정
+                "point_nose_top": (int(landmarks.landmark[168].x * w), int(landmarks.landmark[168].y * h)),    # 콧대 시작점
+                "point_nose_tip": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),        # 코끝
+                "point_nose": (int(landmarks.landmark[4].x * w), int(landmarks.landmark[4].y * h)),           # 기존 코끝 포인트 유지
+                
+                # 입술 (MediaPipe Face Mesh의 입술 랜드마크 수정)
+                "point_mouth_left": (int(landmarks.landmark[61].x * w), int(landmarks.landmark[61].y * h)),      # 입술 좌측
+                "point_mouth_right": (int(landmarks.landmark[291].x * w), int(landmarks.landmark[291].y * h)),   # 입술 우측
+                "point_upper_lip": (int(landmarks.landmark[13].x * w), int(landmarks.landmark[13].y * h)),       # 윗입술 중앙
+                "point_lower_lip": (int(landmarks.landmark[14].x * w), int(landmarks.landmark[14].y * h)),       # 아랫입술 중앙
+                
+                # 입술 높이 측정을 위한 추가 랜드마크
+                "point_upper_lip_top": (int(landmarks.landmark[37].x * w), int(landmarks.landmark[37].y * h)),      # 윗입술 상단 중앙
+                "point_lower_lip_bottom": (int(landmarks.landmark[84].x * w), int(landmarks.landmark[84].y * h)),   # 아랫입술 하단 중앙
+                "point_upper_lip_outer": (int(landmarks.landmark[0].x * w), int(landmarks.landmark[0].y * h)),      # 윗입술 외곽선 중앙
+                "point_lower_lip_outer": (int(landmarks.landmark[17].x * w), int(landmarks.landmark[17].y * h)),    # 아랫입술 외곽선 중앙
+                
+                # 얼굴 윤곽
+                "point_chin": (int(landmarks.landmark[152].x * w), int(landmarks.landmark[152].y * h)),
+                "point_forehead": (int(landmarks.landmark[10].x * w), int(landmarks.landmark[10].y * h)),
+                "point_temple_left": (int(landmarks.landmark[139].x * w), int(landmarks.landmark[139].y * h)),
+                "point_temple_right": (int(landmarks.landmark[368].x * w), int(landmarks.landmark[368].y * h)),
+                "point_cheek_left": (int(landmarks.landmark[123].x * w), int(landmarks.landmark[123].y * h)),
+                "point_cheek_right": (int(landmarks.landmark[352].x * w), int(landmarks.landmark[352].y * h)),
+                "point_jaw_left": (int(landmarks.landmark[132].x * w), int(landmarks.landmark[132].y * h)),
+                "point_jaw_right": (int(landmarks.landmark[361].x * w), int(landmarks.landmark[361].y * h))
+            }
+            
+            # 디버깅을 위한 랜드마크 출력
+            print("\n코 랜드마크 좌표:")
+            for key, value in landmarks_dict.items():
+                if 'nose' in key:
+                    print(f"{key}: {value}")
+            
+            return landmarks_dict
+            
+    except Exception as e:
+        raise ValueError(f"랜드마크 검출 중 오류 발생: {str(e)}")
+>>>>>>> 15b021e9207b81a28beee9178240618845d55246
 
 def analyze_beauty_features(landmarks: dict, image: np.ndarray) -> Dict[str, Any]:
     """통합된 얼굴 분석을 수행합니다."""
